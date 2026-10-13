@@ -51,3 +51,7 @@ app/src/main/java/com/sovereignedge/pocketpantry/
 ```
 
 Product data: Open Food Facts, licensed under the Open Database License (ODbL).
+
+## Licence
+
+Apache License 2.0, copyright 2026 Sovereign Edge Inc. See LICENSE and NOTICE.
