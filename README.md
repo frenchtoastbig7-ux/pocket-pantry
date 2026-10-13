@@ -21,6 +21,16 @@ Keystore (StrongBox / Titan M2 where available) and backups are disabled. There 
 Barcodes are read on-device with ML Kit's bundled model (no Play services needed); unknown barcodes are looked up on
 Open Food Facts and the answer is cached, and anything it doesn't know you name once.
 
+## Installing
+
+- **F-Droid client (Droid-ify, Neo Store, F-Droid)**: add the repo `https://frenchtoastbig7-ux.github.io/fdroid/repo`
+  and install Pocket Pantry; updates arrive through the client.
+- **Direct APK**: each release on the [Releases page](https://github.com/frenchtoastbig7-ux/pocket-pantry/releases)
+  carries the signed APK.
+
+Release signing certificate (SHA-256):
+`a8f05853f333c9d7da23fdd008161219cd73125ac969abcfc8363b03b42d6118`
+
 ## Connecting Claude
 
 Settings → Claude → paste an API key from console.anthropic.com. Requests go directly from the phone to
