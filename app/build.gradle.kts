@@ -16,8 +16,8 @@ android {
         // Pixel 10 Pro / Pro XL ship with Android 16; 31 keeps Material You dynamic colour available.
         minSdk = 31
         targetSdk = 37
-        versionCode = 1
-        versionName = "0.1.0"
+        versionCode = 2
+        versionName = "0.2.0"
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         // Pixel 10 Pro is arm64 only; dropping the other ABIs of the ML Kit native decoder roughly halves the APK.
         ndk {
@@ -95,6 +95,8 @@ dependencies {
     implementation("androidx.camera:camera-lifecycle:$camerax")
     implementation("androidx.camera:camera-view:$camerax")
     implementation("com.google.mlkit:barcode-scanning:17.3.0")
+    // QR code rendering for the household code (scanning uses ML Kit).
+    implementation("com.google.zxing:core:3.5.3")
 
     testImplementation("junit:junit:4.13.2")
     testImplementation("org.json:json:20250517")

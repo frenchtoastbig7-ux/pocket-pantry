@@ -13,6 +13,10 @@ food in a household and what it costs to replace it.
 - **Recipes** – unlocked once a Claude API key is connected. Ask Claude for recipes and meal plans; it is given the
   current inventory (with expiry dates), the shopping list and your dietary notes. Save replies and have Claude work
   out which ingredients are missing and put them on the shopping list.
+- **Household** – share one pantry with the people you live with. One phone starts a household and shows a code
+  (QR or 32 characters); the other scans or types it. No account and no server: phones sync directly over the home
+  Wi-Fi, or from anywhere over Tailscale, encrypted with a key derived from the code. Changes merge field by field,
+  quantities add up, and an optional background listener keeps a phone reachable while the app is closed.
 - **Settings** – Claude connection (API key, model, effort), appearance (system / light / dark, Material You colours),
   cooking preferences, stores, locations, currency, data.
 
@@ -30,6 +34,19 @@ Open Food Facts and the answer is cached, and anything it doesn't know you name 
 
 Release signing certificate (SHA-256):
 `a8f05853f333c9d7da23fdd008161219cd73125ac969abcfc8363b03b42d6118`
+
+## Household sync
+
+Every write to a synced table (pantry, locations, products, stores, prices, finished trips, shopping list, saved
+recipes) is recorded as an operation with a hybrid logical clock; phones exchange the operations they are missing and
+replay them, so the same op log means the same state. Fields are last-writer-wins, quantity changes are deltas, and
+deletes leave tombstones. The live cart, the recipe chat, the API key and the theme stay on each phone.
+
+Transport is a TCP connection on port 47632 with AES-256-GCM frames keyed from the household code. Phones find each
+other on the LAN with DNS-SD (`_pocketpantry._tcp`) and remember every address a peer was reached at, Tailscale
+(100.64.0.0/10) first, so a pair that met once on Wi-Fi can later sync across the tailnet. A peer can also be added by
+address. "Keep syncing in the background" runs a foreground service so the phone stays reachable when the app is
+closed.
 
 ## Connecting Claude
 

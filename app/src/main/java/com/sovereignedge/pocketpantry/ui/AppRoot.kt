@@ -25,6 +25,7 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.sovereignedge.pocketpantry.PantryApp
 import com.sovereignedge.pocketpantry.R
 import com.sovereignedge.pocketpantry.ui.cart.CartScreen
+import com.sovereignedge.pocketpantry.ui.household.HouseholdScreen
 import com.sovereignedge.pocketpantry.ui.inventory.InventoryScreen
 import com.sovereignedge.pocketpantry.ui.recipes.RecipesScreen
 import com.sovereignedge.pocketpantry.ui.settings.SettingsScreen
@@ -46,11 +47,15 @@ fun AppRoot(app: PantryApp) {
     PocketPantryTheme(themeMode = settings.themeMode) {
         var tabIndex by rememberSaveable { mutableIntStateOf(0) }
         var showSettings by rememberSaveable { mutableStateOf(false) }
+        var showHousehold by rememberSaveable { mutableStateOf(false) }
         val chromeVisible = remember { mutableStateOf(true) }
         CompositionLocalProvider(LocalChromeVisible provides chromeVisible) { Surface {
-            if (showSettings) {
+            if (showHousehold) {
+                BackHandler { showHousehold = false }
+                HouseholdScreen(app = app, onBack = { showHousehold = false })
+            } else if (showSettings) {
                 BackHandler { showSettings = false }
-                SettingsScreen(app = app, onBack = { showSettings = false })
+                SettingsScreen(app = app, onBack = { showSettings = false }, onOpenHousehold = { showHousehold = true })
             } else {
                 Scaffold(
                     bottomBar = {

@@ -28,4 +28,14 @@ class MainActivity : ComponentActivity() {
             AppRoot(app)
         }
     }
+
+    override fun onStart() {
+        super.onStart()
+        (application as PantryApp).onActivityStarted()
+    }
+
+    override fun onStop() {
+        (application as PantryApp).onActivityStopped()
+        super.onStop()
+    }
 }

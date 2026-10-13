@@ -48,6 +48,7 @@ import com.sovereignedge.pocketpantry.ai.ClaudeService
 import com.sovereignedge.pocketpantry.data.Location
 import com.sovereignedge.pocketpantry.data.Store
 import com.sovereignedge.pocketpantry.ui.cart.StoreDialog
+import com.sovereignedge.pocketpantry.ui.common.AppIcon
 import com.sovereignedge.pocketpantry.ui.common.AppIconButton
 import com.sovereignedge.pocketpantry.ui.common.ConfirmDialog
 import com.sovereignedge.pocketpantry.ui.common.SectionHeader
@@ -57,8 +58,9 @@ import kotlinx.coroutines.launch
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun SettingsScreen(app: PantryApp, onBack: () -> Unit) {
+fun SettingsScreen(app: PantryApp, onBack: () -> Unit, onOpenHousehold: () -> Unit) {
     val settings by app.settings.state.collectAsStateWithLifecycle()
+    val hh by app.household.state.collectAsStateWithLifecycle()
     val stores by app.repo.stores().collectAsStateWithLifecycle(emptyList())
     val locations by app.repo.locations().collectAsStateWithLifecycle(emptyList())
     val scope = rememberCoroutineScope()
@@ -83,6 +85,14 @@ fun SettingsScreen(app: PantryApp, onBack: () -> Unit) {
         topBar = { TopAppBar(title = { Text("Settings") }, navigationIcon = { AppIconButton(R.drawable.ic_arrow_back, "Back", onClick = onBack) }) },
     ) { padding ->
         Column(Modifier.padding(padding).fillMaxSize().verticalScroll(rememberScrollState())) {
+            SectionHeader("Household")
+            ListItem(
+                modifier = Modifier.clickable(onClick = onOpenHousehold),
+                headlineContent = { Text("Household sync") },
+                supportingContent = { Text(if (hh.joined) "Sharing the pantry, lists, stores and recipes with your household" else "Share one pantry with the people you live with, phone to phone, no account") },
+                trailingContent = { AppIcon(R.drawable.ic_arrow_forward, null) },
+            )
+
             SectionHeader("Claude")
             Column(Modifier.padding(horizontal = 16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
                 Text(

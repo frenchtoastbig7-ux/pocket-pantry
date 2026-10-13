@@ -23,6 +23,11 @@ class SecretStore(context: Context) {
     fun apiKey(): String? = get(API_KEY)
     fun clearApiKey() = prefs.edit().remove(API_KEY).apply()
 
+    /** Other named secrets, such as the household code. */
+    fun putSecret(name: String, value: String) = put(name, value.trim())
+    fun secret(name: String): String? = get(name)
+    fun removeSecret(name: String) = prefs.edit().remove(name).apply()
+
     private fun put(name: String, value: String) {
         val cipher = Cipher.getInstance(TRANSFORMATION)
         cipher.init(Cipher.ENCRYPT_MODE, keystoreKey())

@@ -41,7 +41,7 @@ class BarcodeDeviceTest {
         assumeTrue("needs network", online)
         val context = InstrumentationRegistry.getInstrumentation().targetContext
         context.deleteDatabase("pantry.db")
-        val repo = Repo(context)
+        val repo = Repo(context, "test-device")
         val lookup = ProductLookup(repo)
         val first = lookup.lookup(ean)
         assertNotNull("Open Food Facts should know $ean", first)
