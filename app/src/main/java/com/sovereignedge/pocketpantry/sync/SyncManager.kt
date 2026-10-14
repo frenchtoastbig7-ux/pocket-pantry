@@ -31,7 +31,7 @@ data class SyncStatus(
  * attempt can go over Tailscale when Wi-Fi isn't shared.
  */
 class SyncManager(private val context: Context, val repo: Repo, val household: Household) {
-    private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
+    private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default + kotlinx.coroutines.CoroutineExceptionHandler { _, e -> Log.w("PantrySync", "background sync task failed: $e") })
     private val protocol = Protocol(repo, household) { Addresses.local().map { it.hostPort } }
     private val client = SyncClient(protocol)
     private val server = SyncServer(protocol, scope) { onExchanged(it, incoming = true) }
@@ -51,7 +51,7 @@ class SyncManager(private val context: Context, val repo: Repo, val household: H
         if (isRunning || !household.isJoined) return
         val householdId = household.householdId() ?: return
         server.start()
-        discovery = LanDiscovery(context, householdId, household.deviceId) { host, port, dev ->
+        discovery = LanDiscovery(context, householdId, household.deviceId, scope) { host, port, dev ->
             val addr = if (':' in host) "[$host]:$port" else "$host:$port"
             if (discovered.put(dev, addr) != addr) {
                 _status.value = _status.value.copy(discovered = discovered.size)

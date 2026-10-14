@@ -43,7 +43,7 @@ replay them, so the same op log means the same state. Fields are last-writer-win
 deletes leave tombstones. The live cart, the recipe chat, the API key and the theme stay on each phone.
 
 Transport is a TCP connection on port 47632 with AES-256-GCM frames keyed from the household code. Phones find each
-other on the LAN with DNS-SD (`_pocketpantry._tcp`) and remember every address a peer was reached at, Tailscale
+other on the LAN with DNS-SD (`_pocketpantry._tcp`) and a UDP broadcast beacon on port 47633, and remember every address a peer was reached at, Tailscale
 (100.64.0.0/10) first, so a pair that met once on Wi-Fi can later sync across the tailnet. A peer can also be added by
 address. "Keep syncing in the background" runs a foreground service so the phone stays reachable when the app is
 closed.

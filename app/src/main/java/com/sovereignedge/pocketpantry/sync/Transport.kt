@@ -3,12 +3,17 @@ package com.sovereignedge.pocketpantry.sync
 import android.content.Context
 import android.net.nsd.NsdManager
 import android.net.nsd.NsdServiceInfo
+import android.net.wifi.WifiManager
+import android.os.Build
 import android.util.Log
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import java.net.DatagramPacket
+import java.net.DatagramSocket
 import java.net.Inet4Address
 import java.net.Inet6Address
 import java.net.InetAddress
@@ -16,6 +21,7 @@ import java.net.InetSocketAddress
 import java.net.NetworkInterface
 import java.net.ServerSocket
 import java.net.Socket
+import java.net.SocketTimeoutException
 
 const val SYNC_PORT = 47632
 private const val TAG = "PantrySync"
@@ -118,19 +124,37 @@ class SyncClient(private val protocol: Protocol) {
 }
 
 /**
- * Finds household phones on the same Wi-Fi with multicast DNS. The service name carries a prefix of the household id
- * so phones from other households are ignored before any connection is made. Tailscale doesn't carry multicast, so
- * remembered addresses cover that case.
+ * Finds household phones on the same Wi-Fi two ways: DNS-SD through the system responder, and a small UDP broadcast
+ * beacon on [BEACON_PORT], because multicast DNS is unreliable on some phones and routers. Both only ever carry a
+ * prefix of the household id, so other households are ignored before any connection is made. Tailscale doesn't carry
+ * broadcasts, so remembered addresses cover that case.
  */
-class LanDiscovery(context: Context, private val householdId: String, private val deviceId: String, private val onFound: (host: String, port: Int, deviceId: String) -> Unit) {
+class LanDiscovery(
+    private val context: Context,
+    private val householdId: String,
+    private val deviceId: String,
+    private val scope: CoroutineScope,
+    private val onFound: (host: String, port: Int, deviceId: String) -> Unit,
+) {
     private val nsd = context.getSystemService(Context.NSD_SERVICE) as NsdManager
+    private val wifi = context.applicationContext.getSystemService(Context.WIFI_SERVICE) as? WifiManager
     private val prefix = "pp-${householdId.take(8)}-"
     private val myName = "$prefix${deviceId.take(8)}"
     private var registration: NsdManager.RegistrationListener? = null
     private var discovery: NsdManager.DiscoveryListener? = null
+    private var multicastLock: WifiManager.MulticastLock? = null
+    private var beacon: Job? = null
+    private var beaconSocket: DatagramSocket? = null
 
     fun start() {
         if (registration != null) return
+        // Phones drop multicast and broadcast frames unless an app holds this lock.
+        multicastLock = wifi?.createMulticastLock("pocketpantry-sync")?.apply { setReferenceCounted(false); runCatching { acquire() } }
+        startNsd()
+        startBeacon()
+    }
+
+    private fun startNsd() {
         val info = NsdServiceInfo().apply {
             serviceName = myName
             serviceType = SERVICE_TYPE
@@ -142,7 +166,7 @@ class LanDiscovery(context: Context, private val householdId: String, private va
             override fun onRegistrationFailed(serviceInfo: NsdServiceInfo, errorCode: Int) { Log.w(TAG, "nsd register failed $errorCode") }
             override fun onServiceUnregistered(serviceInfo: NsdServiceInfo) = Unit
             override fun onUnregistrationFailed(serviceInfo: NsdServiceInfo, errorCode: Int) = Unit
-        }.also { runCatching { nsd.registerService(info, NsdManager.PROTOCOL_DNS_SD, it) } }
+        }.also { runCatching { nsd.registerService(info, NsdManager.PROTOCOL_DNS_SD, it) }.onFailure { e -> Log.w(TAG, "nsd register: $e") } }
 
         discovery = object : NsdManager.DiscoveryListener {
             override fun onDiscoveryStarted(serviceType: String) = Unit
@@ -155,33 +179,119 @@ class LanDiscovery(context: Context, private val householdId: String, private va
                 if (!name.startsWith(prefix) || name == myName) return
                 resolve(serviceInfo)
             }
-        }.also { runCatching { nsd.discoverServices(SERVICE_TYPE, NsdManager.PROTOCOL_DNS_SD, it) } }
+        }.also { runCatching { nsd.discoverServices(SERVICE_TYPE, NsdManager.PROTOCOL_DNS_SD, it) }.onFailure { e -> Log.w(TAG, "nsd discover: $e") } }
+    }
+
+    private fun resolved(serviceInfo: NsdServiceInfo) {
+        val addresses = if (Build.VERSION.SDK_INT >= 34) serviceInfo.hostAddresses else listOfNotNull(serviceInfo.host)
+        // Prefer IPv4; Android reports link-local IPv6 with a scope suffix that can't be dialled as written.
+        val host = (addresses.firstOrNull { it is Inet4Address } ?: addresses.firstOrNull { !it.isLinkLocalAddress })?.hostAddress?.substringBefore('%') ?: return
+        val dev = serviceInfo.attributes["dev"]?.let { String(it) } ?: serviceInfo.serviceName
+        if (dev == deviceId) return
+        Log.i(TAG, "nsd found $dev at $host:${serviceInfo.port}")
+        onFound(host, serviceInfo.port, dev)
     }
 
     @Suppress("DEPRECATION")
     private fun resolve(info: NsdServiceInfo) {
-        nsd.resolveService(
-            info,
-            object : NsdManager.ResolveListener {
-                override fun onResolveFailed(serviceInfo: NsdServiceInfo, errorCode: Int) = Unit
-                override fun onServiceResolved(serviceInfo: NsdServiceInfo) {
-                    val host = serviceInfo.host?.hostAddress ?: return
-                    val dev = serviceInfo.attributes["dev"]?.let { String(it) } ?: serviceInfo.serviceName
-                    if (dev == deviceId) return
-                    onFound(host, serviceInfo.port, dev)
-                }
-            },
-        )
+        if (Build.VERSION.SDK_INT >= 34) {
+            runCatching {
+                nsd.registerServiceInfoCallback(
+                    info, context.mainExecutor,
+                    object : NsdManager.ServiceInfoCallback {
+                        override fun onServiceInfoCallbackRegistrationFailed(errorCode: Int) = Unit
+                        override fun onServiceUpdated(serviceInfo: NsdServiceInfo) {
+                            resolved(serviceInfo)
+                            runCatching { nsd.unregisterServiceInfoCallback(this) }
+                        }
+                        override fun onServiceLost() = Unit
+                        override fun onServiceInfoCallbackUnregistered() = Unit
+                    },
+                )
+            }.onFailure { e -> Log.w(TAG, "nsd resolve: $e") }
+        } else {
+            nsd.resolveService(
+                info,
+                object : NsdManager.ResolveListener {
+                    override fun onResolveFailed(serviceInfo: NsdServiceInfo, errorCode: Int) = Unit
+                    override fun onServiceResolved(serviceInfo: NsdServiceInfo) = resolved(serviceInfo)
+                },
+            )
+        }
     }
+
+    /** Every few seconds: "pp1 <household prefix> <device id> <port>" to the broadcast address; listen for the same. */
+    private fun startBeacon() {
+        beacon = scope.launch(Dispatchers.IO + kotlinx.coroutines.CoroutineExceptionHandler { _, e -> Log.w(TAG, "beacon loop ended: $e") }) {
+            val socket = try {
+                DatagramSocket(null).apply {
+                    reuseAddress = true
+                    broadcast = true
+                    bind(InetSocketAddress(BEACON_PORT))
+                    soTimeout = 1000
+                }
+            } catch (e: Exception) {
+                Log.w(TAG, "beacon bind failed: $e")
+                return@launch
+            }
+            beaconSocket = socket
+            val payload = "pp1 ${householdId.take(16)} $deviceId $SYNC_PORT".toByteArray()
+            val buffer = ByteArray(256)
+            var lastSend = 0L
+            try {
+                while (isActive) {
+                    val now = System.currentTimeMillis()
+                    if (now - lastSend >= BEACON_INTERVAL_MS) {
+                        lastSend = now
+                        for (target in broadcastTargets()) {
+                            runCatching { socket.send(DatagramPacket(payload, payload.size, target, BEACON_PORT)) }
+                        }
+                    }
+                    val packet = DatagramPacket(buffer, buffer.size)
+                    try {
+                        socket.receive(packet)
+                    } catch (_: SocketTimeoutException) {
+                        continue
+                    } catch (e: Exception) {
+                        if (socket.isClosed || !isActive) break // stop() closed the socket under us
+                        Log.d(TAG, "beacon receive: $e")
+                        continue
+                    }
+                    val parts = String(packet.data, 0, packet.length).split(' ')
+                    if (parts.size != 4 || parts[0] != "pp1" || parts[1] != householdId.take(16) || parts[2] == deviceId) continue
+                    val host = packet.address.hostAddress?.substringBefore('%') ?: continue
+                    Log.i(TAG, "beacon from ${parts[2]} at $host")
+                    onFound(host, parts[3].toIntOrNull() ?: SYNC_PORT, parts[2])
+                }
+            } finally {
+                runCatching { socket.close() }
+            }
+        }
+    }
+
+    /** Directed broadcast addresses of every IPv4 interface, plus the limited broadcast address. */
+    private fun broadcastTargets(): List<InetAddress> = runCatching {
+        NetworkInterface.getNetworkInterfaces().toList()
+            .filter { it.isUp && !it.isLoopback }
+            .flatMap { it.interfaceAddresses }
+            .mapNotNull { it.broadcast }
+            .plus(InetAddress.getByName("255.255.255.255"))
+            .distinct()
+    }.getOrDefault(listOf(InetAddress.getByName("255.255.255.255")))
 
     fun stop() {
         registration?.let { runCatching { nsd.unregisterService(it) } }
         discovery?.let { runCatching { nsd.stopServiceDiscovery(it) } }
         registration = null
         discovery = null
+        beacon?.cancel(); beacon = null
+        runCatching { beaconSocket?.close() }; beaconSocket = null
+        multicastLock?.let { runCatching { if (it.isHeld) it.release() } }; multicastLock = null
     }
 
     private companion object {
         const val SERVICE_TYPE = "_pocketpantry._tcp."
+        const val BEACON_PORT = 47633
+        const val BEACON_INTERVAL_MS = 5_000L
     }
 }

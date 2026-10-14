@@ -14,3 +14,12 @@
 -dontwarn java.lang.invoke.**
 -dontwarn java.beans.**
 -dontwarn java.lang.reflect.AnnotatedType
+
+# ML Kit discovers its components reflectively (ComponentRegistrar implementations named in the manifest) and the
+# bundled barcode model lives in gms.internal packages. Shrinking them produced an NPE in BarcodeScanning.getClient.
+-keep class com.google.mlkit.** { *; }
+-keep class com.google.android.gms.internal.mlkit_** { *; }
+-keep class com.google.android.gms.common.** { *; }
+-keep class com.google.firebase.components.** { *; }
+-keep class * implements com.google.firebase.components.ComponentRegistrar { *; }
+-dontwarn com.google.android.gms.**

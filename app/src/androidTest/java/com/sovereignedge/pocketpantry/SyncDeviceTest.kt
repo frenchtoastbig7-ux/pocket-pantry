@@ -8,6 +8,7 @@ import com.sovereignedge.pocketpantry.sync.Household
 import com.sovereignedge.pocketpantry.sync.Protocol
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.async
+import kotlinx.coroutines.cancel
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.runBlocking
 import org.junit.Assert.assertEquals
@@ -99,6 +100,33 @@ class SyncDeviceTest {
         both()
         assertTrue(b.shoppingListNow().single().checked)
         assertEquals(a.opCount(), b.opCount())
+    }
+
+    @Test
+    fun beaconDiscoveryHearsAHouseholdPhone() = runBlocking {
+        val found = java.util.concurrent.CompletableFuture<Triple<String, Int, String>>()
+        val scope = kotlinx.coroutines.CoroutineScope(Dispatchers.IO)
+        val householdId = "0123456789abcdef0123456789abcdef"
+        val discovery = com.sovereignedge.pocketpantry.sync.LanDiscovery(context, householdId, "device-a", scope) { host, port, dev -> found.complete(Triple(host, port, dev)) }
+        discovery.start()
+        try {
+            Thread.sleep(500)
+            java.net.DatagramSocket().use { socket ->
+                val wrong = "pp1 ffffffffffffffff device-x 47632".toByteArray()
+                socket.send(java.net.DatagramPacket(wrong, wrong.size, java.net.InetAddress.getByName("127.0.0.1"), 47633))
+                val self = "pp1 ${householdId.take(16)} device-a 47632".toByteArray()
+                socket.send(java.net.DatagramPacket(self, self.size, java.net.InetAddress.getByName("127.0.0.1"), 47633))
+                val right = "pp1 ${householdId.take(16)} device-b 47632".toByteArray()
+                socket.send(java.net.DatagramPacket(right, right.size, java.net.InetAddress.getByName("127.0.0.1"), 47633))
+            }
+            val hit = found.get(10, java.util.concurrent.TimeUnit.SECONDS)
+            assertEquals("device-b", hit.third)
+            assertEquals(47632, hit.second)
+            assertEquals("127.0.0.1", hit.first)
+        } finally {
+            discovery.stop()
+            scope.cancel()
+        }
     }
 
     @Test
