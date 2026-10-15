@@ -118,7 +118,7 @@ class RecipeChat(private val repo: Repo, private val settings: Settings, private
 
         fun fmtQty(item: Item): String {
             val q = if (item.quantity % 1.0 == 0.0) item.quantity.toLong().toString() else "%.2f".format(item.quantity).trimEnd('0').trimEnd('.')
-            return (q + " " + item.unit).trim()
+            return (q + " " + item.unit).trim() + (if (item.size.isNotBlank()) " × ${item.size}" else "")
         }
 
         fun systemPrompt(items: List<Item>, locations: List<Location>, list: List<ShoppingItem>, today: LocalDate = LocalDate.now(), settings: SettingsLike? = null): String {

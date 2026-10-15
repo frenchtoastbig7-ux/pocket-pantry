@@ -94,11 +94,11 @@ class SyncTable(
             SyncTable(
                 "items",
                 mapOf(
-                    "name" to "name", "barcode" to "barcode", "brand" to "brand", "quantity" to "quantity", "unit" to "unit",
+                    "name" to "name", "barcode" to "barcode", "brand" to "brand", "quantity" to "quantity", "unit" to "unit", "size" to "size",
                     "expires_on" to "expires_on", "notes" to "notes", "low_threshold" to "low_threshold", "added_at" to "added_at", "updated_at" to "updated_at",
                 ),
                 refs = mapOf("location" to ("location_id" to "locations")),
-                defaults = mapOf("name" to "Unnamed", "quantity" to 1.0, "unit" to "", "notes" to "", "added_at" to 0L, "updated_at" to 0L),
+                defaults = mapOf("name" to "Unnamed", "quantity" to 1.0, "unit" to "", "size" to "", "notes" to "", "added_at" to 0L, "updated_at" to 0L),
                 bus = "items",
             ),
             SyncTable(

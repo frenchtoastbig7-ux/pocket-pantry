@@ -1,6 +1,7 @@
 package com.sovereignedge.pocketpantry
 
 import android.app.Application
+import kotlinx.coroutines.launch
 import androidx.camera.camera2.Camera2Config
 import androidx.camera.core.CameraSelector
 import androidx.camera.core.CameraXConfig
@@ -38,6 +39,10 @@ class PantryApp : Application(), CameraXConfig.Provider {
         chat = RecipeChat(repo, settings, claude)
         products = ProductLookup(repo)
         sync = SyncManager(this, repo, household)
+        kotlinx.coroutines.CoroutineScope(kotlinx.coroutines.Dispatchers.IO).launch {
+            repo.migrateUnitsToSizes()
+            repo.mergeDuplicates()
+        }
     }
 
     fun onActivityStarted() {

@@ -156,6 +156,10 @@ class SyncManager(private val context: Context, val repo: Repo, val household: H
     private suspend fun onExchanged(result: Protocol.Result, incoming: Boolean, via: String? = null) {
         val addrs = (listOfNotNull(via) + result.peerAddrs).distinct()
         repo.rememberPeer(result.peerDevice, result.peerName, addrs, synced = true)
+        if (result.received > 0) {
+            val merged = repo.mergeDuplicates()
+            if (merged > 0) Log.i("PantrySync", "merged $merged duplicate locations/stores after sync")
+        }
         if (via != null) repo.forgetPeer("manual:$via")
         if (incoming) {
             Log.i("PantrySync", "incoming from ${result.peerName}: received ${result.received}, sent ${result.sent}")

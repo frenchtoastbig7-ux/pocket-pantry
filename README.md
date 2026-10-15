@@ -4,7 +4,7 @@ A native Android app (Kotlin, Jetpack Compose, Material You) for the Pixel 10 Pr
 food in a household and what it costs to replace it.
 
 - **Pantry** – an inventory organised by storage location (Pantry, Counter, Fridge, Freezer, or your own). Quantities,
-  units, expiry dates, low-stock warnings, notes. Add items by hand or by scanning a barcode.
+  units, pack sizes, expiry dates, low-stock warnings, notes. Add items by hand or by scanning a barcode.
 - **Cart** – pick your grocery store, then scan items as they go in the cart and watch the running total (with the
   store's sales tax on taxable lines). Prices are remembered per store, so a product you've bought before is added at
   its last price in one scan. Finishing a trip can add everything to the pantry in one tap. Past trips are kept.

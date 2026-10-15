@@ -32,6 +32,7 @@ class PantryDb(context: Context, name: String = "pantry.db") : SQLiteOpenHelper(
                 brand TEXT,
                 quantity REAL NOT NULL DEFAULT 1,
                 unit TEXT NOT NULL DEFAULT '',
+                size TEXT NOT NULL DEFAULT '',
                 location_id INTEGER NOT NULL REFERENCES locations(id) ON DELETE CASCADE,
                 expires_on INTEGER,
                 notes TEXT NOT NULL DEFAULT '',
@@ -135,6 +136,9 @@ class PantryDb(context: Context, name: String = "pantry.db") : SQLiteOpenHelper(
             db.execSQL("CREATE UNIQUE INDEX prices_uuid ON prices(uuid)")
             createSyncTables(db)
         }
+        if (oldVersion < 3) {
+            db.execSQL("ALTER TABLE items ADD COLUMN size TEXT NOT NULL DEFAULT ''")
+        }
     }
 
     private fun createSyncTables(db: SQLiteDatabase) {
@@ -168,7 +172,7 @@ class PantryDb(context: Context, name: String = "pantry.db") : SQLiteOpenHelper(
     }
 
     companion object {
-        const val VERSION = 2
+        const val VERSION = 3
         val DEFAULT_LOCATIONS = listOf("Pantry", "Counter", "Fridge", "Freezer")
         const val DEFAULT_STORE = "My grocery store"
     }

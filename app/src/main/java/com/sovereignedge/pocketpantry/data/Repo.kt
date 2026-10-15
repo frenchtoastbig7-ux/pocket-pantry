@@ -238,6 +238,59 @@ class Repo(context: Context, val deviceId: String, dbName: String = "pantry.db")
         }
     }
 
+    /**
+     * One-time cleanup for data entered before the size field existed: a unit that contains a digit ("1 Packet",
+     * "1.25 OZ") was really a pack size. Emitted as ops so every phone converges on the same result.
+     */
+    suspend fun migrateUnitsToSizes() = commit {
+        d.rawQuery("SELECT uuid, unit FROM items WHERE size = '' AND unit GLOB '*[0-9]*'", null)
+            .mapAll { it.getString(0) to it.getString(1) }
+            .forEach { (uuid, unit) -> set("items", uuid, mapOf("size" to unit.trim(), "unit" to "")) }
+    }
+
+    /**
+     * Two phones that each had data before pairing both brought their own "Pantry", "Fridge" and "My grocery store".
+     * Fold rows with the same name together, keeping the one with the smallest uuid so every phone picks the same
+     * survivor, and point items, prices and trips at it. Emitted as ops, so it replicates. Returns how many were merged.
+     */
+    suspend fun mergeDuplicates(): Int {
+        var merged = 0
+        commit {
+            fun groups(table: String) = d.rawQuery("SELECT id, uuid, name FROM $table WHERE uuid NOT LIKE 'placeholder:%'", null)
+                .mapAll { Triple(it.getLong(0), it.getString(1), it.getString(2).trim().lowercase()) }
+                .groupBy { it.third }.values.filter { it.size > 1 }.map { it.sortedBy { row -> row.second } }
+            for (group in groups("locations")) {
+                val keep = group.first()
+                for (dup in group.drop(1)) {
+                    d.rawQuery("SELECT uuid FROM items WHERE location_id=?", arrayOf("${dup.first}")).mapAll { it.getString(0) }
+                        .forEach { set("items", it, mapOf("location" to keep.second)) }
+                    delete("locations", dup.second)
+                    merged++
+                }
+            }
+            for (group in groups("stores")) {
+                val keep = group.first()
+                for (dup in group.drop(1)) {
+                    d.rawQuery("SELECT uuid, barcode, price, seen_at FROM prices WHERE store_id=?", arrayOf("${dup.first}"))
+                        .mapAll { listOf(it.getString(0), it.getString(1), it.getDouble(2), it.getLong(3)) }
+                        .forEach { (uuid, bc, price, seen) ->
+                            set("prices", "price:${keep.second}:$bc", mapOf("store" to keep.second, "barcode" to bc, "price" to price, "seen_at" to seen))
+                            delete("prices", uuid as String)
+                        }
+                    d.rawQuery("SELECT uuid, finished_at FROM cart_sessions WHERE store_id=?", arrayOf("${dup.first}"))
+                        .mapAll { it.getString(0) to it.isNull(1) }
+                        .forEach { (uuid, open) ->
+                            if (open) d.update("cart_sessions", cv("store_id" to keep.first), "uuid=?", arrayOf(uuid)) // live cart: local only
+                            else set("cart_sessions", uuid, mapOf("store" to keep.second))
+                        }
+                    delete("stores", dup.second)
+                    merged++
+                }
+            }
+        }
+        return merged
+    }
+
     /** True when nothing but the seeded defaults exists, so joining a household can start from the other phone's data. */
     suspend fun isPristine(): Boolean = read { d ->
         fun count(sql: String) = d.rawQuery(sql, null).single { it.getLong(0) }
@@ -328,7 +381,7 @@ class Repo(context: Context, val deviceId: String, dbName: String = "pantry.db")
 
     private fun itemFields(item: Item, locationUuid: String) = mapOf(
         "name" to item.name.trim(), "barcode" to item.barcode?.ifBlank { null }, "brand" to item.brand?.ifBlank { null },
-        "quantity" to item.quantity, "unit" to item.unit.trim(), "location" to locationUuid, "expires_on" to item.expiresOn,
+        "quantity" to item.quantity, "unit" to item.unit.trim(), "size" to item.size.trim(), "location" to locationUuid, "expires_on" to item.expiresOn,
         "notes" to item.notes.trim(), "low_threshold" to item.lowThreshold, "added_at" to item.addedAt, "updated_at" to item.updatedAt,
     )
 
@@ -368,7 +421,7 @@ class Repo(context: Context, val deviceId: String, dbName: String = "pantry.db")
             if (existing != null) {
                 delta("items", existing, "quantity", line.qty)
             } else {
-                val item = Item(0, line.name, line.barcode, null, line.qty, "", locationId, null, "", null, now, now)
+                val item = Item(0, line.name, line.barcode, null, line.qty, "", "", locationId, null, "", null, now, now)
                 set("items", Hlc.newId(), itemFields(item, locationUuid))
             }
         }
@@ -605,9 +658,9 @@ class Repo(context: Context, val deviceId: String, dbName: String = "pantry.db")
 
     private fun Cursor.toItem(offset: Int = 0) = Item(
         id = getLong(offset), name = getString(offset + 1), barcode = getStringOrNull(offset + 2), brand = getStringOrNull(offset + 3),
-        quantity = getDouble(offset + 4), unit = getString(offset + 5), locationId = getLong(offset + 6),
-        expiresOn = if (isNull(offset + 7)) null else getLong(offset + 7), notes = getString(offset + 8),
-        lowThreshold = if (isNull(offset + 9)) null else getDouble(offset + 9), addedAt = getLong(offset + 10), updatedAt = getLong(offset + 11),
+        quantity = getDouble(offset + 4), unit = getString(offset + 5), size = getString(offset + 6), locationId = getLong(offset + 7),
+        expiresOn = if (isNull(offset + 8)) null else getLong(offset + 8), notes = getString(offset + 9),
+        lowThreshold = if (isNull(offset + 10)) null else getDouble(offset + 10), addedAt = getLong(offset + 11), updatedAt = getLong(offset + 12),
     )
 
     private fun Cursor.toSession() = CartSession(getLong(0), getLong(1), getLong(2), if (isNull(3)) null else getLong(3))
@@ -638,8 +691,8 @@ class Repo(context: Context, val deviceId: String, dbName: String = "pantry.db")
         const val T_CHAT = "chat"
         const val T_PEERS = "peers"
         val ALL_TABLES = arrayOf(T_LOCATIONS, T_ITEMS, T_PRODUCTS, T_STORES, T_PRICES, T_CART, T_LIST, T_RECIPES, T_CHAT, T_PEERS)
-        const val ITEM_COLS = "id, name, barcode, brand, quantity, unit, location_id, expires_on, notes, low_threshold, added_at, updated_at"
-        const val ITEM_COL_COUNT = 12
+        const val ITEM_COLS = "id, name, barcode, brand, quantity, unit, size, location_id, expires_on, notes, low_threshold, added_at, updated_at"
+        const val ITEM_COL_COUNT = 13
         /** Columns that must stay integers even though JSON hands numbers back as doubles. */
         val INTEGER_COLUMNS = setOf("sort_order", "expires_on", "added_at", "updated_at", "seen_at", "started_at", "finished_at", "created_at", "checked", "taxable")
     }

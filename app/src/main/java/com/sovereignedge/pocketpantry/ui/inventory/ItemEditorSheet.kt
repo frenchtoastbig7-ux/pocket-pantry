@@ -56,6 +56,7 @@ fun ItemEditorSheet(
     var brand by rememberSaveable { mutableStateOf(item.brand ?: "") }
     var quantity by rememberSaveable { mutableStateOf(fmtNumber(item.quantity)) }
     var unit by rememberSaveable { mutableStateOf(item.unit) }
+    var size by rememberSaveable { mutableStateOf(item.size) }
     var locationId by rememberSaveable { mutableStateOf(item.locationId) }
     var expiresOn by rememberSaveable { mutableStateOf(item.expiresOn) }
     var lowThreshold by rememberSaveable { mutableStateOf(item.lowThreshold?.let(::fmtNumber) ?: "") }
@@ -63,10 +64,11 @@ fun ItemEditorSheet(
     var pickDate by remember { mutableStateOf(false) }
     var confirmDelete by remember { mutableStateOf(false) }
     // A barcode lookup can finish after the sheet opened: fill in what the user hasn't typed yet.
-    androidx.compose.runtime.LaunchedEffect(item.name, item.brand, item.notes) {
+    androidx.compose.runtime.LaunchedEffect(item.name, item.brand, item.notes, item.size) {
         if (name.isBlank()) name = item.name
         if (brand.isBlank()) brand = item.brand ?: ""
         if (notes.isBlank()) notes = item.notes
+        if (size.isBlank()) size = item.size
     }
 
     ModalBottomSheet(onDismissRequest = onDismiss) {
@@ -82,6 +84,11 @@ fun ItemEditorSheet(
                 )
                 OutlinedTextField(value = unit, onValueChange = { unit = it }, label = { Text("Unit") }, placeholder = { Text("pcs, g, L…") }, singleLine = true, modifier = Modifier.weight(1f))
             }
+            OutlinedTextField(
+                value = size, onValueChange = { size = it }, label = { Text("Pack size (optional)") }, placeholder = { Text("1.25 oz, 6 pack, 2 L…") },
+                singleLine = true, modifier = Modifier.fillMaxWidth(),
+            )
+            Text("Quantity counts how many you have; pack size is what one of them is.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
             Text("Location", style = MaterialTheme.typography.labelLarge)
             LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 items(locations, key = { it.id }) { loc ->
@@ -109,7 +116,7 @@ fun ItemEditorSheet(
                         onSave(
                             item.copy(
                                 name = name.trim(), brand = brand.trim().ifBlank { null }, quantity = parseNumber(quantity) ?: 1.0,
-                                unit = unit.trim(), locationId = locationId, expiresOn = expiresOn,
+                                unit = unit.trim(), size = size.trim(), locationId = locationId, expiresOn = expiresOn,
                                 lowThreshold = parseNumber(lowThreshold), notes = notes.trim(),
                             ),
                         )

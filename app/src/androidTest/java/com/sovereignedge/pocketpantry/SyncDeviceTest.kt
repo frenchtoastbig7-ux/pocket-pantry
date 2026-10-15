@@ -58,7 +58,7 @@ class SyncDeviceTest {
         b.dropDefaultsForJoin()
         a.seedOpsForExistingState()
         val fridge = a.locations().first().first { it.name == "Fridge" }
-        a.upsertItem(Item(0, "Milk", "123", null, 4.0, "L", fridge.id, null, "", null, 0, 0))
+        a.upsertItem(Item(0, "Milk", "123", null, 4.0, "L", "", fridge.id, null, "", null, 0, 0))
         both()
         assertEquals(listOf("Counter", "Freezer", "Fridge", "Pantry"), b.locations().first().map { it.name }.sorted())
         val milkB = b.itemsNow().single()
@@ -100,6 +100,35 @@ class SyncDeviceTest {
         both()
         assertTrue(b.shoppingListNow().single().checked)
         assertEquals(a.opCount(), b.opCount())
+    }
+
+    @Test
+    fun duplicateLocationsMergeTheSameWayOnBothPhones() = runBlocking {
+        // Both phones had their own defaults and data before pairing.
+        a.seedOpsForExistingState()
+        b.seedOpsForExistingState()
+        val fridgeA = a.locations().first().first { it.name == "Fridge" }
+        val fridgeB = b.locations().first().first { it.name == "Fridge" }
+        a.upsertItem(Item(0, "Milk", null, null, 1.0, "1 Packet", "", fridgeA.id, null, "", null, 0, 0))
+        b.upsertItem(Item(0, "Butter", null, null, 2.0, "", "250 g", fridgeB.id, null, "", null, 0, 0))
+        both()
+        assertEquals(8, a.locations().first().size) // 4 + 4 duplicates
+        val mergedA = a.mergeDuplicates()
+        val mergedB = b.mergeDuplicates()
+        assertEquals(5, mergedA + mergedB - 5) // 4 locations + 1 store merged on each side, counted once per phone
+        both()
+        assertEquals(listOf("Counter", "Freezer", "Fridge", "Pantry"), a.locations().first().map { it.name }.sorted())
+        assertEquals(listOf("Counter", "Freezer", "Fridge", "Pantry"), b.locations().first().map { it.name }.sorted())
+        assertEquals(1, a.stores().first().size)
+        val fridge = a.locations().first().first { it.name == "Fridge" }
+        assertEquals(listOf("Butter", "Milk"), a.itemsNow().filter { it.locationId == fridge.id }.map { it.name }.sorted())
+        assertEquals(a.itemsNow().map { it.name to it.size }.sortedBy { it.first }, b.itemsNow().map { it.name to it.size }.sortedBy { it.first })
+        // Old-style "unit holds the size" data is cleaned up, and the cleanup replicates.
+        a.migrateUnitsToSizes()
+        both()
+        val milkB = b.itemsNow().first { it.name == "Milk" }
+        assertEquals("1 Packet", milkB.size)
+        assertEquals("", milkB.unit)
     }
 
     @Test

@@ -39,9 +39,9 @@ class LogicTest {
         val fridge = Location(1, "Fridge", 0)
         val pantry = Location(2, "Pantry", 1)
         val items = listOf(
-            Item(1, "Milk", null, "Dairyco", 1.0, "L", 1, today.plusDays(2).toEpochDay(), "", null, 0, 0),
-            Item(2, "Rice", null, null, 0.5, "kg", 2, null, "", 1.0, 0, 0),
-            Item(3, "Yogurt", null, null, 2.0, "", 1, today.minusDays(1).toEpochDay(), "", null, 0, 0),
+            Item(1, "Milk", null, "Dairyco", 1.0, "L", "", 1, today.plusDays(2).toEpochDay(), "", null, 0, 0),
+            Item(2, "Rice", null, null, 0.5, "kg", "", 2, null, "", 1.0, 0, 0),
+            Item(3, "Yogurt", null, null, 2.0, "", "", 1, today.minusDays(1).toEpochDay(), "", null, 0, 0),
         )
         val list = listOf(ShoppingItem(1, "Eggs", "12", null, false, 0), ShoppingItem(2, "Bread", "", null, true, 0))
         val prompt = RecipeChat.systemPrompt(items, listOf(fridge, pantry), list, today)

@@ -16,8 +16,8 @@ android {
         // Pixel 10 Pro / Pro XL ship with Android 16; 31 keeps Material You dynamic colour available.
         minSdk = 31
         targetSdk = 37
-        versionCode = 6
-        versionName = "0.2.4"
+        versionCode = 7
+        versionName = "0.2.5"
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         // Pixel 10 Pro is arm64 only; dropping the other ABIs of the ML Kit native decoder roughly halves the APK.
         ndk {

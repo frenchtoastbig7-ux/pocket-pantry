@@ -90,8 +90,8 @@ fun InventoryScreen(app: PantryApp, modifier: Modifier = Modifier, onOpenSetting
 
     fun newItem(product: Product? = null, barcode: String? = null) = Item(
         id = 0, name = product?.name ?: "", barcode = product?.barcode ?: barcode, brand = product?.brand,
-        quantity = 1.0, unit = "", locationId = filter ?: settings.defaultLocationId.takeIf { id -> locations.any { it.id == id } } ?: locations.firstOrNull()?.id ?: 0,
-        expiresOn = null, notes = product?.quantityText?.let { "Pack size: $it" } ?: "", lowThreshold = null, addedAt = 0, updatedAt = 0,
+        quantity = 1.0, unit = "", size = product?.quantityText ?: "", locationId = filter ?: settings.defaultLocationId.takeIf { id -> locations.any { it.id == id } } ?: locations.firstOrNull()?.id ?: 0,
+        expiresOn = null, notes = "", lowThreshold = null, addedAt = 0, updatedAt = 0,
     )
 
     val chrome = com.sovereignedge.pocketpantry.ui.LocalChromeVisible.current
@@ -117,7 +117,7 @@ fun InventoryScreen(app: PantryApp, modifier: Modifier = Modifier, onOpenSetting
                     lookingUp = false
                     val current = editing
                     if (current != null && current.id == 0L && current.barcode == code) {
-                        if (product != null) editing = current.copy(name = current.name.ifBlank { product.name }, brand = current.brand ?: product.brand, notes = current.notes.ifBlank { product.quantityText?.let { "Pack size: $it" } ?: "" })
+                        if (product != null) editing = current.copy(name = current.name.ifBlank { product.name }, brand = current.brand ?: product.brand, size = current.size.ifBlank { product.quantityText ?: "" })
                         else snackbar.showSnackbar("Unknown barcode. Name it once and Pocket Pantry will remember it.")
                     }
                 }
@@ -256,6 +256,7 @@ private fun ItemRow(item: Item, today: LocalDate, onClick: () -> Unit, onAdjust:
         supportingContent = {
             val parts = buildList {
                 item.brand?.let { add(it) }
+                if (item.size.isNotBlank()) add(item.size)
                 expiryLabel?.let { add(it) }
                 if (item.isLow) add("Running low")
             }

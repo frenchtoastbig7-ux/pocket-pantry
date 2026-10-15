@@ -13,6 +13,8 @@ data class Item(
     val brand: String?,
     val quantity: Double,
     val unit: String,
+    /** Pack size as printed on the product ("1.25 oz", "6 pack"); [quantity] counts packs. */
+    val size: String,
     val locationId: Long,
     val expiresOn: Long?,
     val notes: String,
