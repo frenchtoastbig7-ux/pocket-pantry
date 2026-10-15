@@ -25,6 +25,7 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.sovereignedge.pocketpantry.PantryApp
 import com.sovereignedge.pocketpantry.R
 import com.sovereignedge.pocketpantry.ui.cart.CartScreen
+import com.sovereignedge.pocketpantry.ui.connector.ConnectorScreen
 import com.sovereignedge.pocketpantry.ui.household.HouseholdScreen
 import com.sovereignedge.pocketpantry.ui.inventory.InventoryScreen
 import com.sovereignedge.pocketpantry.ui.recipes.RecipesScreen
@@ -48,16 +49,20 @@ fun AppRoot(app: PantryApp) {
         var tabIndex by rememberSaveable { mutableIntStateOf(0) }
         var showSettings by rememberSaveable { mutableStateOf(false) }
         var showHousehold by rememberSaveable { mutableStateOf(false) }
+        var showConnector by rememberSaveable { mutableStateOf(false) }
         val pendingJoin by app.pendingJoin.collectAsStateWithLifecycle()
         androidx.compose.runtime.LaunchedEffect(pendingJoin) { if (pendingJoin != null) showHousehold = true }
         val chromeVisible = remember { mutableStateOf(true) }
         CompositionLocalProvider(LocalChromeVisible provides chromeVisible) { Surface {
-            if (showHousehold) {
+            if (showConnector) {
+                BackHandler { showConnector = false }
+                ConnectorScreen(app = app, onBack = { showConnector = false })
+            } else if (showHousehold) {
                 BackHandler { showHousehold = false }
                 HouseholdScreen(app = app, onBack = { showHousehold = false })
             } else if (showSettings) {
                 BackHandler { showSettings = false }
-                SettingsScreen(app = app, onBack = { showSettings = false }, onOpenHousehold = { showHousehold = true })
+                SettingsScreen(app = app, onBack = { showSettings = false }, onOpenHousehold = { showHousehold = true }, onOpenConnector = { showConnector = true })
             } else {
                 Scaffold(
                     bottomBar = {

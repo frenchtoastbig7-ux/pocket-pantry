@@ -15,6 +15,11 @@ data class SettingsSnapshot(
     val hasApiKey: Boolean,
     /** "system", "light" or "dark". */
     val themeMode: String,
+    val connectorEnabled: Boolean,
+    /** "vpn" (Tailscale/VPN address only) or "loopback" (USB via adb forward). */
+    val connectorBind: String,
+    val connectorPort: Int,
+    val connectorAllowDeletes: Boolean,
 )
 
 /** Non-secret preferences, with a StateFlow so Compose screens recompose on change. */
@@ -32,6 +37,10 @@ class Settings(context: Context, private val secrets: SecretStore) {
     fun setActiveStore(id: Long) = edit { putLong(K_STORE, id) }
     fun setDefaultLocation(id: Long) = edit { putLong(K_LOCATION, id) }
     fun setThemeMode(value: String) = edit { putString(K_THEME, value) }
+    fun setConnectorEnabled(on: Boolean) = edit { putBoolean(K_CONN_ON, on) }
+    fun setConnectorBind(value: String) = edit { putString(K_CONN_BIND, value) }
+    fun setConnectorPort(value: Int) = edit { putInt(K_CONN_PORT, value) }
+    fun setConnectorAllowDeletes(on: Boolean) = edit { putBoolean(K_CONN_DELETES, on) }
 
     fun setApiKey(key: String) {
         secrets.putApiKey(key)
@@ -70,6 +79,10 @@ class Settings(context: Context, private val secrets: SecretStore) {
         defaultLocationId = prefs.getLong(K_LOCATION, 0L),
         hasApiKey = secrets.hasApiKey(),
         themeMode = prefs.getString(K_THEME, "system") ?: "system",
+        connectorEnabled = prefs.getBoolean(K_CONN_ON, false),
+        connectorBind = prefs.getString(K_CONN_BIND, "vpn") ?: "vpn",
+        connectorPort = prefs.getInt(K_CONN_PORT, DEFAULT_CONNECTOR_PORT),
+        connectorAllowDeletes = prefs.getBoolean(K_CONN_DELETES, false),
     )
 
     companion object {
@@ -89,5 +102,10 @@ class Settings(context: Context, private val secrets: SecretStore) {
         private const val K_STORE = "active_store"
         private const val K_LOCATION = "default_location"
         private const val K_THEME = "theme_mode"
+        private const val K_CONN_ON = "connector_enabled"
+        private const val K_CONN_BIND = "connector_bind"
+        private const val K_CONN_PORT = "connector_port"
+        private const val K_CONN_DELETES = "connector_allow_deletes"
+        const val DEFAULT_CONNECTOR_PORT = 47634
     }
 }

@@ -23,3 +23,9 @@
 -keep class com.google.firebase.components.** { *; }
 -keep class * implements com.google.firebase.components.ComponentRegistrar { *; }
 -dontwarn com.google.android.gms.**
+
+# Claude connector: MCP SDK protocol types are kotlinx.serialization classes looked up by name at runtime.
+-keep class io.modelcontextprotocol.** { *; }
+-keepclassmembers class **$$serializer { *; }
+# Ktor's IntelliJ debugger detection references JVM management APIs that Android doesn't have.
+-dontwarn java.lang.management.**

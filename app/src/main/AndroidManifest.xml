@@ -59,6 +59,15 @@
                 android:value="Listens for other phones in the user's household to exchange pantry changes directly, without a server" />
         </service>
 
+        <service
+            android:name=".bridge.ConnectorService"
+            android:exported="false"
+            android:foregroundServiceType="specialUse">
+            <property
+                android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"
+                android:value="Serves the household pantry to the user's own Claude Code over their VPN (an MCP server), so Claude can plan meals; opt-in" />
+        </service>
+
         <receiver
             android:name=".sync.BootReceiver"
             android:exported="false">

@@ -39,6 +39,7 @@ class PantryApp : Application(), CameraXConfig.Provider {
         chat = RecipeChat(repo, settings, claude)
         products = ProductLookup(repo)
         sync = SyncManager(this, repo, household)
+        if (settings.current.connectorEnabled) com.sovereignedge.pocketpantry.bridge.ConnectorService.start(this)
         kotlinx.coroutines.CoroutineScope(kotlinx.coroutines.Dispatchers.IO).launch {
             repo.migrateUnitsToSizes()
             repo.mergeDuplicates()

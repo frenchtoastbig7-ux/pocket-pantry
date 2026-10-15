@@ -49,7 +49,15 @@ other on the LAN with DNS-SD (`_pocketpantry._tcp`) and a UDP broadcast beacon o
 address. "Keep syncing in the background" runs a foreground service so the phone stays reachable when the app is
 closed.
 
-## Connecting Claude
+## Claude connector (no API key)
+
+Settings → Claude connector turns the phone into an MCP server for Claude Code or Claude Desktop on your own computer,
+so Claude on your subscription can read the pantry, keep the shopping list, look up prices and save recipes. It binds
+only to a VPN address (Tailscale) or to loopback for USB, requires a bearer token, and deletes only if you allow it.
+The screen shows the one-line `claude mcp add` command to run on the computer. The Claude app's Remote Control then
+gives you the same session on the phone.
+
+## Connecting Claude (in-app recipes)
 
 Settings → Claude → paste an API key from console.anthropic.com. Requests go directly from the phone to
 `api.anthropic.com` using the official Anthropic Java SDK. Anthropic's terms do not allow third-party apps to sign in

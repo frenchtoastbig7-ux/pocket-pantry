@@ -58,7 +58,7 @@ import kotlinx.coroutines.launch
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun SettingsScreen(app: PantryApp, onBack: () -> Unit, onOpenHousehold: () -> Unit) {
+fun SettingsScreen(app: PantryApp, onBack: () -> Unit, onOpenHousehold: () -> Unit, onOpenConnector: () -> Unit) {
     val settings by app.settings.state.collectAsStateWithLifecycle()
     val hh by app.household.state.collectAsStateWithLifecycle()
     val stores by app.repo.stores().collectAsStateWithLifecycle(emptyList())
@@ -94,7 +94,14 @@ fun SettingsScreen(app: PantryApp, onBack: () -> Unit, onOpenHousehold: () -> Un
             )
 
             SectionHeader("Claude")
-            Column(Modifier.padding(horizontal = 16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+            ListItem(
+                modifier = Modifier.clickable(onClick = onOpenConnector),
+                headlineContent = { Text("Claude connector") },
+                supportingContent = { Text(if (settings.connectorEnabled) "On: Claude Code on your computer can read and update the pantry over Tailscale" else "Let Claude Code or Claude Desktop use the pantry on your own subscription, no API key") },
+                trailingContent = { AppIcon(R.drawable.ic_arrow_forward, null) },
+            )
+            Text("Recipes inside the app (below) use an API key instead.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.padding(horizontal = 16.dp))
+            Column(Modifier.padding(horizontal = 16.dp, vertical = 8.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
                 Text(
                     if (settings.hasApiKey) "Connected with an API key. Recipes are unlocked." else "Not connected. Recipes are locked until a key is added.",
                     style = MaterialTheme.typography.bodyMedium,

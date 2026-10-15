@@ -464,6 +464,22 @@ class Repo(context: Context, val deviceId: String, dbName: String = "pantry.db")
         delete("stores", uuidOf(d, "stores", id))
     }
 
+    data class PriceSeen(val store: String, val price: Double, val seenAt: Long)
+
+    /** Every store's last price for a barcode. */
+    suspend fun pricesFor(barcode: String): List<PriceSeen> = read { d ->
+        d.rawQuery("SELECT s.name, p.price, p.seen_at FROM prices p JOIN stores s ON s.id = p.store_id WHERE p.barcode=? ORDER BY p.seen_at DESC", arrayOf(barcode))
+            .mapAll { PriceSeen(it.getString(0), it.getDouble(1), it.getLong(2)) }
+    }
+
+    /** Cached products whose name or brand contains [query]. */
+    suspend fun searchProducts(query: String, limit: Int = 20): List<Product> = read { d ->
+        d.rawQuery(
+            "SELECT barcode, name, brand, quantity_text, source FROM products WHERE name LIKE ? OR brand LIKE ? ORDER BY name LIMIT ?",
+            arrayOf("%$query%", "%$query%", "$limit"),
+        ).mapAll { Product(it.getString(0), it.getString(1), it.getStringOrNull(2), it.getStringOrNull(3), it.getString(4)) }
+    }
+
     suspend fun lastPrice(storeId: Long, barcode: String): Double? = read { d ->
         d.rawQuery("SELECT price FROM prices WHERE store_id=? AND barcode=?", arrayOf("$storeId", barcode)).firstOrNull { it.getDouble(0) }
     }

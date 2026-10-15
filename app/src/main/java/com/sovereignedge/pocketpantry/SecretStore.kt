@@ -28,6 +28,17 @@ class SecretStore(context: Context) {
     fun secret(name: String): String? = get(name)
     fun removeSecret(name: String) = prefs.edit().remove(name).apply()
 
+    /** The connector bearer token, created on first use. */
+    fun bridgeToken(): String = get(BRIDGE_TOKEN) ?: rotateBridgeToken()
+
+    /** Replaces the connector token; Claude Code must be reconfigured with the new one. */
+    fun rotateBridgeToken(): String {
+        val bytes = ByteArray(32).also { java.security.SecureRandom().nextBytes(it) }
+        val token = Base64.encodeToString(bytes, Base64.URL_SAFE or Base64.NO_WRAP or Base64.NO_PADDING)
+        put(BRIDGE_TOKEN, token)
+        return token
+    }
+
     private fun put(name: String, value: String) {
         val cipher = Cipher.getInstance(TRANSFORMATION)
         cipher.init(Cipher.ENCRYPT_MODE, keystoreKey())
@@ -75,6 +86,7 @@ class SecretStore(context: Context) {
         const val ANDROID_KEYSTORE = "AndroidKeyStore"
         const val ALIAS = "anthropic_api_key_wrap"
         const val API_KEY = "anthropic_api_key"
+        const val BRIDGE_TOKEN = "bridge_token"
         const val TRANSFORMATION = "AES/GCM/NoPadding"
     }
 }

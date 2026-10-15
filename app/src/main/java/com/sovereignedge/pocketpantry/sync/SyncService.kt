@@ -65,5 +65,6 @@ class BootReceiver : BroadcastReceiver() {
         if (intent.action != Intent.ACTION_BOOT_COMPLETED) return
         val app = context.applicationContext as PantryApp
         if (app.household.current.backgroundSync && app.household.isJoined) SyncService.start(context)
+        if (app.settings.current.connectorEnabled) com.sovereignedge.pocketpantry.bridge.ConnectorService.start(context)
     }
 }

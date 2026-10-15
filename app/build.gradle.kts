@@ -16,8 +16,8 @@ android {
         // Pixel 10 Pro / Pro XL ship with Android 16; 31 keeps Material You dynamic colour available.
         minSdk = 31
         targetSdk = 37
-        versionCode = 7
-        versionName = "0.2.5"
+        versionCode = 8
+        versionName = "0.3.0"
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         // Pixel 10 Pro is arm64 only; dropping the other ABIs of the ML Kit native decoder roughly halves the APK.
         ndk {
@@ -79,6 +79,10 @@ dependencies {
     implementation("com.anthropic:anthropic-java:2.62.0")
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.11.0")
     implementation("com.squareup.okhttp3:okhttp:4.12.0")
+
+    // Claude connector: MCP server over Streamable HTTP for Claude Code / Claude Desktop on the user's own machine.
+    implementation("io.modelcontextprotocol:kotlin-sdk-server:0.15.0")
+    implementation("io.ktor:ktor-server-cio:3.5.2")
 
     implementation("androidx.core:core-ktx:1.19.0")
     implementation("androidx.activity:activity-compose:1.13.0")
