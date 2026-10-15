@@ -105,7 +105,9 @@ class PantryDb(context: Context, name: String = "pantry.db") : SQLiteOpenHelper(
                 title TEXT NOT NULL,
                 body TEXT NOT NULL,
                 prompt TEXT NOT NULL DEFAULT '',
-                created_at INTEGER NOT NULL)"""
+                created_at INTEGER NOT NULL,
+                rating INTEGER NOT NULL DEFAULT 0,
+                photo TEXT)"""
         )
         db.execSQL(
             """CREATE TABLE chat_messages(
@@ -138,6 +140,10 @@ class PantryDb(context: Context, name: String = "pantry.db") : SQLiteOpenHelper(
         }
         if (oldVersion < 3) {
             db.execSQL("ALTER TABLE items ADD COLUMN size TEXT NOT NULL DEFAULT ''")
+        }
+        if (oldVersion < 4) {
+            db.execSQL("ALTER TABLE recipes ADD COLUMN rating INTEGER NOT NULL DEFAULT 0")
+            db.execSQL("ALTER TABLE recipes ADD COLUMN photo TEXT")
         }
     }
 
@@ -172,7 +178,7 @@ class PantryDb(context: Context, name: String = "pantry.db") : SQLiteOpenHelper(
     }
 
     companion object {
-        const val VERSION = 3
+        const val VERSION = 4
         val DEFAULT_LOCATIONS = listOf("Pantry", "Counter", "Fridge", "Freezer")
         const val DEFAULT_STORE = "My grocery store"
     }

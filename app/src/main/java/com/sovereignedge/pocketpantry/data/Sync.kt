@@ -123,7 +123,7 @@ class SyncTable(
                 defaults = mapOf("name" to "Unnamed", "quantity_text" to "", "checked" to 0, "created_at" to 0L), bus = "shopping_list",
             ),
             SyncTable(
-                "recipes", mapOf("title" to "title", "body" to "body", "prompt" to "prompt", "created_at" to "created_at"),
+                "recipes", mapOf("title" to "title", "body" to "body", "prompt" to "prompt", "created_at" to "created_at", "rating" to "rating", "photo" to "photo"),
                 defaults = mapOf("title" to "Recipe", "body" to "", "prompt" to "", "created_at" to 0L), bus = "recipes",
             ),
         )

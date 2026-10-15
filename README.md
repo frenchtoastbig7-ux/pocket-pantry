@@ -11,8 +11,8 @@ food in a household and what it costs to replace it.
 - **List** – a shopping list. Scanning a matching product in the cart ticks it off automatically; low-stock pantry
   items and a recipe's missing ingredients can be added in bulk.
 - **Recipes** – unlocked once a Claude API key is connected. Ask Claude for recipes and meal plans; it is given the
-  current inventory (with expiry dates), the shopping list and your dietary notes. Save replies and have Claude work
-  out which ingredients are missing and put them on the shopping list.
+  current inventory (with expiry dates), the shopping list and your dietary notes. Save replies, rate them 0–5 stars,
+  add a photo of the dish, and have Claude work out which ingredients are missing and put them on the shopping list.
 - **Household** – share one pantry with the people you live with. One phone starts a household and shows a code
   (QR or 32 characters); the other scans or types it. No account and no server: phones sync directly over the home
   Wi-Fi, or from anywhere over Tailscale, encrypted with a key derived from the code. Changes merge field by field,

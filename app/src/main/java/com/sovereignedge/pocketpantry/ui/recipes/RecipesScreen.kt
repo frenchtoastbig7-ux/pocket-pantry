@@ -1,6 +1,20 @@
 package com.sovereignedge.pocketpantry.ui.recipes
 
 import androidx.activity.compose.BackHandler
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.PickVisualMediaRequest
+import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.foundation.Image
+import androidx.compose.foundation.layout.aspectRatio
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.platform.LocalContext
+import com.sovereignedge.pocketpantry.ui.common.Photos
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -8,6 +22,7 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -142,10 +157,11 @@ fun RecipesScreen(app: PantryApp, modifier: Modifier = Modifier, onOpenSettings:
         }
     }
 
-    openRecipe?.let { recipe ->
+    openRecipe?.let { opened ->
+        val recipe = recipes.firstOrNull { it.id == opened.id } ?: opened
         BackHandler { openRecipe = null }
         RecipeDetail(
-            recipe = recipe, modifier = modifier, extracting = extracting, onBack = { openRecipe = null },
+            app = app, recipe = recipe, modifier = modifier, extracting = extracting, onBack = { openRecipe = null },
             onAddToList = { addToList(recipe.body) },
             onDelete = { scope.launch { app.repo.deleteRecipe(recipe.id) }; openRecipe = null },
         )
@@ -178,7 +194,8 @@ fun RecipesScreen(app: PantryApp, modifier: Modifier = Modifier, onOpenSettings:
                             ListItem(
                                 modifier = Modifier.clickable { openRecipe = recipe },
                                 headlineContent = { Text(recipe.title) },
-                                supportingContent = { Text(fmtDateTime(recipe.createdAt)) },
+                                supportingContent = { Text((if (recipe.rating > 0) "★".repeat(recipe.rating) + "☆".repeat(5 - recipe.rating) + " · " else "") + fmtDateTime(recipe.createdAt)) },
+                                leadingContent = { RecipeThumb(app, recipe) },
                             )
                         }
                     }
@@ -306,10 +323,42 @@ private fun SuggestionsDialog(found: List<IngredientSuggestion>, onDismiss: () -
     )
 }
 
+@Composable
+private fun RecipeThumb(app: PantryApp, recipe: Recipe) {
+    val file = remember(recipe.photo) { app.repo.photoFile(recipe) }
+    var bitmap by remember(file) { mutableStateOf<android.graphics.Bitmap?>(null) }
+    LaunchedEffect(file) { bitmap = file?.let { f -> withContext(Dispatchers.IO) { android.graphics.BitmapFactory.decodeFile(f.path, android.graphics.BitmapFactory.Options().apply { inSampleSize = 8 }) } } }
+    val b = bitmap
+    if (b != null) Image(b.asImageBitmap(), contentDescription = null, contentScale = ContentScale.Crop, modifier = Modifier.size(48.dp).clip(RoundedCornerShape(8.dp)))
+    else Icon(painterResource(R.drawable.ic_restaurant), contentDescription = null, modifier = Modifier.size(48.dp).padding(10.dp))
+}
+
+@Composable
+private fun StarRow(rating: Int, onRate: (Int) -> Unit) {
+    Row {
+        for (i in 1..5) {
+            TextButton(onClick = { onRate(if (i == rating) 0 else i) }, contentPadding = androidx.compose.foundation.layout.PaddingValues(4.dp)) {
+                Text(if (i <= rating) "★" else "☆", style = MaterialTheme.typography.headlineSmall, color = if (i <= rating) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant)
+            }
+        }
+    }
+}
+
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-private fun RecipeDetail(recipe: Recipe, modifier: Modifier, extracting: Boolean, onBack: () -> Unit, onAddToList: () -> Unit, onDelete: () -> Unit) {
+private fun RecipeDetail(app: PantryApp, recipe: Recipe, modifier: Modifier, extracting: Boolean, onBack: () -> Unit, onAddToList: () -> Unit, onDelete: () -> Unit) {
     var confirmDelete by remember { mutableStateOf(false) }
+    val context = LocalContext.current
+    val scope = rememberCoroutineScope()
+    val photoFile = remember(recipe.photo) { app.repo.photoFile(recipe) }
+    var photo by remember(photoFile) { mutableStateOf<android.graphics.Bitmap?>(null) }
+    LaunchedEffect(photoFile) { photo = photoFile?.let { f -> withContext(Dispatchers.IO) { android.graphics.BitmapFactory.decodeFile(f.path, android.graphics.BitmapFactory.Options().apply { inSampleSize = 2 }) } } }
+    val pickPhoto = rememberLauncherForActivityResult(ActivityResultContracts.PickVisualMedia()) { uri ->
+        if (uri != null) scope.launch { withContext(Dispatchers.IO) { Photos.fromUri(context, uri) }?.let { app.repo.setRecipePhoto(recipe.id, it) } }
+    }
+    val takePhoto = rememberLauncherForActivityResult(ActivityResultContracts.TakePicturePreview()) { bitmap ->
+        if (bitmap != null) scope.launch { app.repo.setRecipePhoto(recipe.id, withContext(Dispatchers.IO) { Photos.fromBitmap(bitmap) }) }
+    }
     Scaffold(
         modifier = modifier,
         contentWindowInsets = WindowInsets(0, 0, 0, 0),
@@ -326,6 +375,14 @@ private fun RecipeDetail(recipe: Recipe, modifier: Modifier, extracting: Boolean
     ) { padding ->
         Column(Modifier.padding(padding).fillMaxSize().verticalScroll(rememberScrollState()).padding(16.dp)) {
             if (extracting) LinearProgressIndicator(Modifier.fillMaxWidth())
+            photo?.let { Image(it.asImageBitmap(), contentDescription = "Recipe photo", contentScale = ContentScale.Crop, modifier = Modifier.fillMaxWidth().aspectRatio(4f / 3f).clip(RoundedCornerShape(16.dp))) }
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                StarRow(recipe.rating) { scope.launch { app.repo.setRecipeRating(recipe.id, it) } }
+                Spacer(Modifier.weight(1f))
+                TextButton(onClick = { pickPhoto.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly)) }) { Text(if (photo == null) "Add photo" else "Change") }
+                TextButton(onClick = { takePhoto.launch(null) }) { Text("Camera") }
+                if (photo != null) TextButton(onClick = { scope.launch { app.repo.setRecipePhoto(recipe.id, null) } }) { Text("Remove") }
+            }
             Markdown(recipe.body)
             Spacer(Modifier.height(32.dp))
         }

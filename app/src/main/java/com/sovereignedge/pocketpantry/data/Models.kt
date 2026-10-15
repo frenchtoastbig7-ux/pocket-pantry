@@ -70,7 +70,8 @@ data class ShoppingItem(
     val createdAt: Long,
 )
 
-data class Recipe(val id: Long, val title: String, val body: String, val createdAt: Long, val prompt: String)
+/** [rating] is 0 (unrated) to 5 stars; [photo] is a file name under the app's recipe-photos directory. */
+data class Recipe(val id: Long, val title: String, val body: String, val createdAt: Long, val prompt: String, val rating: Int = 0, val photo: String? = null)
 
 data class ChatMessage(val id: Long, val role: String, val text: String, val createdAt: Long) {
     val isUser: Boolean get() = role == "user"

@@ -23,6 +23,8 @@ import org.json.JSONObject
  */
 class Repo(context: Context, val deviceId: String, dbName: String = "pantry.db") {
     private val helper = PantryDb(context, dbName)
+    /** Recipe photos live here as `<recipe uuid>.jpg`; they replicate inside ops as base64. */
+    val photosDir: java.io.File = java.io.File(context.filesDir, "recipe-photos").apply { mkdirs() }
     private val db: SQLiteDatabase get() = helper.writableDatabase
     private val changes = MutableSharedFlow<String>(extraBufferCapacity = 256)
 
@@ -108,13 +110,16 @@ class Repo(context: Context, val deviceId: String, dbName: String = "pantry.db")
     }
 
     /** Ops a peer with [theirCursors] is missing, oldest first, so parents arrive before children. */
-    suspend fun opsMissingFrom(theirCursors: Map<String, Long>, limit: Int = 500, afterHlc: String = ""): List<Op> = read { d ->
+    suspend fun opsMissingFrom(theirCursors: Map<String, Long>, limit: Int = 500, afterHlc: String = "", maxBytes: Int = 2_000_000): List<Op> = read { d ->
         val mine = d.rawQuery("SELECT DISTINCT device FROM ops", null).mapAll { it.getString(0) }
         val clauses = mine.joinToString(" OR ") { "(device=? AND seq>?)" }
         if (clauses.isEmpty()) return@read emptyList()
         val args = mine.flatMap { listOf(it, (theirCursors[it] ?: 0L).toString()) } + afterHlc + limit.toString()
+        var bytes = 0
         d.rawQuery("SELECT op_id, device, seq, hlc, table_name, row_uuid, kind, payload FROM ops WHERE ($clauses) AND hlc > ? ORDER BY hlc LIMIT ?", args.toTypedArray())
             .mapAll { Op(it.getString(0), it.getString(1), it.getLong(2), it.getString(3), it.getString(4), it.getString(5), it.getString(6), JSONObject(it.getString(7))) }
+            // Photo ops are big; keep each batch to a few megabytes so a sync frame stays small.
+            .takeWhile { op -> bytes += op.fields.toString().length; bytes <= maxBytes || bytes == op.fields.toString().length }
     }
 
     suspend fun opCount(): Long = read { d -> d.rawQuery("SELECT COUNT(*) FROM ops", null).single { it.getLong(0) } }
@@ -136,6 +141,7 @@ class Repo(context: Context, val deviceId: String, dbName: String = "pantry.db")
                 }
                 d.delete(op.table, "uuid=?", arrayOf(op.row))
                 d.delete("clocks", "table_name=? AND row_uuid=?", arrayOf(op.table, op.row))
+                if (op.table == "recipes") java.io.File(photosDir, "${op.row}.jpg").delete()
             }
             Op.DELTA -> {
                 val field = op.fields.keys().asSequence().firstOrNull() ?: return null
@@ -154,7 +160,18 @@ class Repo(context: Context, val deviceId: String, dbName: String = "pantry.db")
                     if (clock != null && clock >= op.hlc) continue
                     val raw = op.fields.get(field).takeUnless { it == JSONObject.NULL }
                     val ref = table.refs[field]
-                    if (ref != null) {
+                    if (field == PHOTO_FIELD) {
+                        // The photo itself: write (or remove) the file and point the photo column at it.
+                        val file = java.io.File(photosDir, "${op.row}.jpg")
+                        if (raw is String && raw.isNotEmpty()) {
+                            file.writeBytes(android.util.Base64.decode(raw, android.util.Base64.NO_WRAP))
+                            values.put("photo", file.name)
+                        } else {
+                            file.delete()
+                            values.putNull("photo")
+                        }
+                        d.insertWithOnConflict("clocks", null, cv("table_name" to op.table, "row_uuid" to op.row, "field" to "photo", "hlc" to op.hlc), SQLiteDatabase.CONFLICT_REPLACE)
+                    } else if (ref != null) {
                         val (col, refTable) = ref
                         val refUuid = raw as? String ?: continue
                         values.put(col, localIdOf(d, refTable, refUuid) ?: ensureRow(d, SyncTable.byName.getValue(refTable), refUuid))
@@ -233,8 +250,8 @@ class Repo(context: Context, val deviceId: String, dbName: String = "pantry.db")
         seed(SyncTable.byName.getValue("shopping_list"), "name, quantity_text, barcode, checked, created_at") {
             mapOf("name" to it.getString(1), "quantity_text" to it.getString(2), "barcode" to it.getStringOrNull(3), "checked" to it.getInt(4), "created_at" to it.getLong(5))
         }
-        seed(SyncTable.byName.getValue("recipes"), "title, body, prompt, created_at") {
-            mapOf("title" to it.getString(1), "body" to it.getString(2), "prompt" to it.getString(3), "created_at" to it.getLong(4))
+        seed(SyncTable.byName.getValue("recipes"), "title, body, prompt, created_at, rating") {
+            mapOf("title" to it.getString(1), "body" to it.getString(2), "prompt" to it.getString(3), "created_at" to it.getLong(4), "rating" to it.getInt(5))
         }
     }
 
@@ -627,15 +644,29 @@ class Repo(context: Context, val deviceId: String, dbName: String = "pantry.db")
 
     // ---------- Recipes and chat ----------
 
-    fun recipes(): Flow<List<Recipe>> = watch(T_RECIPES) { d ->
-        d.rawQuery("SELECT id, title, body, created_at, prompt FROM recipes ORDER BY created_at DESC", null).mapAll {
-            Recipe(it.getLong(0), it.getString(1), it.getString(2), it.getLong(3), it.getString(4))
+    private fun SQLiteDatabase.recipesNow(): List<Recipe> =
+        rawQuery("SELECT id, title, body, created_at, prompt, rating, photo FROM recipes ORDER BY created_at DESC", null).mapAll {
+            Recipe(it.getLong(0), it.getString(1), it.getString(2), it.getLong(3), it.getString(4), it.getInt(5), it.getStringOrNull(6))
         }
+
+    fun recipes(): Flow<List<Recipe>> = watch(T_RECIPES) { it.recipesNow() }
+
+    suspend fun recipesNow(): List<Recipe> = read { it.recipesNow() }
+
+    suspend fun saveRecipe(title: String, body: String, prompt: String, rating: Int = 0): Long {
+        val uuid = Hlc.newId()
+        commit { set("recipes", uuid, mapOf("title" to title.trim(), "body" to body, "prompt" to prompt, "created_at" to System.currentTimeMillis(), "rating" to rating.coerceIn(0, 5))) }
+        return read { localIdOf(it, "recipes", uuid) ?: 0L }
     }
 
-    suspend fun saveRecipe(title: String, body: String, prompt: String) = commit {
-        set("recipes", Hlc.newId(), mapOf("title" to title.trim(), "body" to body, "prompt" to prompt, "created_at" to System.currentTimeMillis()))
+    suspend fun setRecipeRating(id: Long, rating: Int) = commit { set("recipes", uuidOf(d, "recipes", id), mapOf("rating" to rating.coerceIn(0, 5))) }
+
+    /** Stores [jpeg] (already resized) as the recipe's photo, or removes the photo when null; replicates to the household. */
+    suspend fun setRecipePhoto(id: Long, jpeg: ByteArray?) = commit {
+        set("recipes", uuidOf(d, "recipes", id), mapOf(PHOTO_FIELD to jpeg?.let { android.util.Base64.encodeToString(it, android.util.Base64.NO_WRAP) }))
     }
+
+    fun photoFile(recipe: Recipe): java.io.File? = recipe.photo?.let { java.io.File(photosDir, it) }?.takeIf { it.exists() }
 
     suspend fun deleteRecipe(id: Long) = commit { delete("recipes", uuidOf(d, "recipes", id)) }
 
@@ -709,6 +740,8 @@ class Repo(context: Context, val deviceId: String, dbName: String = "pantry.db")
         val ALL_TABLES = arrayOf(T_LOCATIONS, T_ITEMS, T_PRODUCTS, T_STORES, T_PRICES, T_CART, T_LIST, T_RECIPES, T_CHAT, T_PEERS)
         const val ITEM_COLS = "id, name, barcode, brand, quantity, unit, size, location_id, expires_on, notes, low_threshold, added_at, updated_at"
         const val ITEM_COL_COUNT = 13
+        /** Op field carrying a recipe photo as base64 JPEG; applied to a file, not a column. */
+        const val PHOTO_FIELD = "photo_b64"
         /** Columns that must stay integers even though JSON hands numbers back as doubles. */
         val INTEGER_COLUMNS = setOf("sort_order", "expires_on", "added_at", "updated_at", "seen_at", "started_at", "finished_at", "created_at", "checked", "taxable")
     }

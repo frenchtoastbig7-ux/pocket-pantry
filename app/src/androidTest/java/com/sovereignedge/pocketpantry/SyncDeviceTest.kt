@@ -132,6 +132,27 @@ class SyncDeviceTest {
     }
 
     @Test
+    fun recipeRatingAndPhotoReplicate() = runBlocking {
+        a.seedOpsForExistingState(); b.dropDefaultsForJoin()
+        val id = a.saveRecipe("Toast", "# Toast", "", rating = 4)
+        val jpeg = android.graphics.Bitmap.createBitmap(64, 48, android.graphics.Bitmap.Config.ARGB_8888).let { bmp ->
+            java.io.ByteArrayOutputStream().also { bmp.compress(android.graphics.Bitmap.CompressFormat.JPEG, 80, it) }.toByteArray()
+        }
+        a.setRecipePhoto(id, jpeg)
+        both()
+        val onB = b.recipesNow().single()
+        assertEquals(4, onB.rating)
+        val file = b.photoFile(onB)
+        assertTrue("photo file must exist on B", file != null && file.length() == jpeg.size.toLong())
+        b.setRecipeRating(onB.id, 5)
+        b.setRecipePhoto(onB.id, null)
+        both()
+        val onA = a.recipesNow().single()
+        assertEquals(5, onA.rating)
+        assertNull(a.photoFile(onA))
+    }
+
+    @Test
     fun beaconDiscoveryHearsAHouseholdPhone() = runBlocking {
         val found = java.util.concurrent.CompletableFuture<Triple<String, Int, String>>()
         val scope = kotlinx.coroutines.CoroutineScope(Dispatchers.IO)
