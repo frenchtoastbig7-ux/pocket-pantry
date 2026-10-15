@@ -121,7 +121,15 @@ fun RecipesScreen(app: PantryApp, modifier: Modifier = Modifier, onOpenSettings:
                         Modifier.weight(1f, fill = false),
                     )
                 }
-                Button(onClick = onOpenSettings, modifier = Modifier.padding(bottom = 48.dp)) { Text("Open Settings") }
+                val context = LocalContext.current
+                Column(horizontalAlignment = Alignment.CenterHorizontally, modifier = Modifier.padding(bottom = 40.dp)) {
+                    Button(onClick = { openClaudeApp(context) }) {
+                        Icon(painterResource(R.drawable.ic_chef), contentDescription = null)
+                        Spacer(Modifier.width(8.dp))
+                        Text("Open Claude")
+                    }
+                    TextButton(onClick = onOpenSettings) { Text("Set up a key or the connector in Settings") }
+                }
             }
         }
         return
@@ -417,3 +425,12 @@ private fun RecipeDetail(app: PantryApp, recipe: Recipe, modifier: Modifier, ext
     }
     if (confirmDelete) ConfirmDialog("Delete \"${recipe.title}\"?", "This can't be undone.", onConfirm = onDelete, onDismiss = { confirmDelete = false })
 }
+
+/** Opens the Claude app (Remote Control reaches the Claude Code session that has the pantry tools), or its store page. */
+private fun openClaudeApp(context: android.content.Context) {
+    val launch = context.packageManager.getLaunchIntentForPackage(CLAUDE_PACKAGE)
+    val intent = launch ?: android.content.Intent(android.content.Intent.ACTION_VIEW, android.net.Uri.parse("https://play.google.com/store/apps/details?id=$CLAUDE_PACKAGE"))
+    runCatching { context.startActivity(intent.addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK)) }
+}
+
+private const val CLAUDE_PACKAGE = "com.anthropic.claude"
