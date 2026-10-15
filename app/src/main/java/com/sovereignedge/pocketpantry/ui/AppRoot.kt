@@ -48,6 +48,8 @@ fun AppRoot(app: PantryApp) {
         var tabIndex by rememberSaveable { mutableIntStateOf(0) }
         var showSettings by rememberSaveable { mutableStateOf(false) }
         var showHousehold by rememberSaveable { mutableStateOf(false) }
+        val pendingJoin by app.pendingJoin.collectAsStateWithLifecycle()
+        androidx.compose.runtime.LaunchedEffect(pendingJoin) { if (pendingJoin != null) showHousehold = true }
         val chromeVisible = remember { mutableStateOf(true) }
         CompositionLocalProvider(LocalChromeVisible provides chromeVisible) { Surface {
             if (showHousehold) {

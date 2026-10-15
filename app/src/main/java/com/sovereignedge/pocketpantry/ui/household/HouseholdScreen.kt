@@ -71,6 +71,7 @@ import com.sovereignedge.pocketpantry.PantryApp
 import com.sovereignedge.pocketpantry.R
 import com.sovereignedge.pocketpantry.barcode.ScannerViewport
 import com.sovereignedge.pocketpantry.sync.Addresses
+import com.sovereignedge.pocketpantry.sync.LocalNetwork
 import com.sovereignedge.pocketpantry.sync.SyncService
 import com.sovereignedge.pocketpantry.ui.LocalChromeVisible
 import com.sovereignedge.pocketpantry.ui.common.AppIconButton
@@ -123,6 +124,21 @@ fun HouseholdScreen(app: PantryApp, onBack: () -> Unit) {
         }
     }
 
+    var lanGranted by remember { mutableStateOf(LocalNetwork.granted(context)) }
+    val lanPermission = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
+        lanGranted = granted
+        if (granted) app.sync.restart() else scope.launch { snackbar.showSnackbar("Without local network access the phones can't find each other on Wi-Fi.") }
+    }
+    // Ask as soon as the screen is used for a household; Android 17 blocks LAN traffic until this is granted.
+    LaunchedEffect(household.joined) { if (household.joined && !lanGranted) lanPermission.launch(LocalNetwork.PERMISSION) }
+    // Opened from a scanned pocketpantry://join link (camera app or another scanner).
+    val pendingJoin by app.pendingJoin.collectAsStateWithLifecycle()
+    LaunchedEffect(pendingJoin) {
+        val link = pendingJoin ?: return@LaunchedEffect
+        app.pendingJoin.value = null
+        if (!household.joined) join(link) else snackbar.showSnackbar("Already in a household. Leave it first to join another.")
+    }
+
     val notificationPermission = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
         app.household.setBackgroundSync(true)
         SyncService.start(context)
@@ -156,6 +172,7 @@ fun HouseholdScreen(app: PantryApp, onBack: () -> Unit) {
                             "directly over your Wi-Fi, or anywhere over Tailscale, encrypted with a code only you hold. There is no account and no server.",
                         style = MaterialTheme.typography.bodyMedium,
                     )
+                    if (!lanGranted) Text("You'll be asked to allow local network access; that's how the phones find each other on Wi-Fi.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                     Button(
                         modifier = Modifier.fillMaxWidth(),
                         onClick = {
@@ -209,6 +226,15 @@ fun HouseholdScreen(app: PantryApp, onBack: () -> Unit) {
 
                 SectionHeader("Sync")
                 Column(Modifier.padding(horizontal = 16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    if (!lanGranted) {
+                        Card(Modifier.fillMaxWidth()) {
+                            Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                                Text("Local network access is off", style = MaterialTheme.typography.titleSmall)
+                                Text("Android needs your permission before this app can talk to phones on your Wi-Fi. Nothing leaves your network.", style = MaterialTheme.typography.bodySmall)
+                                Button(onClick = { lanPermission.launch(LocalNetwork.PERMISSION) }) { Text("Allow local network access") }
+                            }
+                        }
+                    }
                     if (status.syncing) LinearProgressIndicator(Modifier.fillMaxWidth())
                     Text(
                         buildString {

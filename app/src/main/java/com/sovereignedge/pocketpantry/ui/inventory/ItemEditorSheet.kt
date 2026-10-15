@@ -62,11 +62,17 @@ fun ItemEditorSheet(
     var notes by rememberSaveable { mutableStateOf(item.notes) }
     var pickDate by remember { mutableStateOf(false) }
     var confirmDelete by remember { mutableStateOf(false) }
+    // A barcode lookup can finish after the sheet opened: fill in what the user hasn't typed yet.
+    androidx.compose.runtime.LaunchedEffect(item.name, item.brand, item.notes) {
+        if (name.isBlank()) name = item.name
+        if (brand.isBlank()) brand = item.brand ?: ""
+        if (notes.isBlank()) notes = item.notes
+    }
 
     ModalBottomSheet(onDismissRequest = onDismiss) {
         Column(Modifier.padding(horizontal = 20.dp).verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(10.dp)) {
             Text(if (item.id == 0L) "Add item" else "Edit item", style = MaterialTheme.typography.titleLarge)
-            item.barcode?.let { Text("Barcode $it", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant) }
+            item.barcode?.let { Text(if (item.id == 0L && item.name.isBlank()) "Barcode $it · looking up the product…" else "Barcode $it", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant) }
             OutlinedTextField(value = name, onValueChange = { name = it }, label = { Text("Name") }, singleLine = true, modifier = Modifier.fillMaxWidth())
             OutlinedTextField(value = brand, onValueChange = { brand = it }, label = { Text("Brand (optional)") }, singleLine = true, modifier = Modifier.fillMaxWidth())
             Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {

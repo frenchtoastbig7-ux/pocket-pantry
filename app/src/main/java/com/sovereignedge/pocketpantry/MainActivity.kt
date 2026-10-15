@@ -17,6 +17,7 @@ class MainActivity : ComponentActivity() {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
         val app = application as PantryApp
+        intent?.dataString?.takeIf { it.startsWith("pocketpantry://join") }?.let { app.pendingJoin.value = it }
         setContent {
             val settings by app.settings.state.collectAsStateWithLifecycle()
             val dark = isDarkTheme(settings.themeMode)
@@ -27,6 +28,11 @@ class MainActivity : ComponentActivity() {
             }
             AppRoot(app)
         }
+    }
+
+    override fun onNewIntent(intent: android.content.Intent) {
+        super.onNewIntent(intent)
+        intent.dataString?.takeIf { it.startsWith("pocketpantry://join") }?.let { (application as PantryApp).pendingJoin.value = it }
     }
 
     override fun onStart() {

@@ -25,6 +25,9 @@ class PantryApp : Application(), CameraXConfig.Provider {
     /** True while an Activity is started; the sync listener runs then, and in the background only if opted in. */
     var foregrounded = false
 
+    /** A pocketpantry://join link the app was opened with; the Household screen consumes it. */
+    val pendingJoin = kotlinx.coroutines.flow.MutableStateFlow<String?>(null)
+
     override fun onCreate() {
         super.onCreate()
         secrets = SecretStore(this)

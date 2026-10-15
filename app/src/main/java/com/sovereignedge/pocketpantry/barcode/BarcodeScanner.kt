@@ -141,6 +141,8 @@ fun BarcodeCamera(
     )
 }
 
+private val frames = java.util.concurrent.atomic.AtomicLong()
+
 @OptIn(ExperimentalGetImage::class)
 private fun analyze(
     proxy: androidx.camera.core.ImageProxy,
@@ -155,6 +157,7 @@ private fun analyze(
         proxy.close()
         return
     }
+    if (frames.incrementAndGet() == 1L) android.util.Log.i("PantryScan", "analysing ${proxy.width}x${proxy.height} rotation ${proxy.imageInfo.rotationDegrees}")
     val image = InputImage.fromMediaImage(media, proxy.imageInfo.rotationDegrees)
     scanner.process(image)
         .addOnSuccessListener { barcodes ->
@@ -164,10 +167,12 @@ private fun analyze(
                 val last = lastSeen[value] ?: 0L
                 if (now - last < cooldownMillis) continue
                 lastSeen[value] = now
+                android.util.Log.i("PantryScan", "decoded ${barcode.format}: $value")
                 onCode(value)
                 break
             }
         }
+        .addOnFailureListener { e -> android.util.Log.w("PantryScan", "barcode detection failed: $e") }
         .addOnCompleteListener { proxy.close() }
 }
 

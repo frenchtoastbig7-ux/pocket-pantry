@@ -15,8 +15,8 @@ import java.util.concurrent.TimeUnit
  */
 class ProductLookup(private val repo: Repo) {
     private val http = OkHttpClient.Builder()
-        .connectTimeout(8, TimeUnit.SECONDS)
-        .readTimeout(8, TimeUnit.SECONDS)
+        .connectTimeout(5, TimeUnit.SECONDS)
+        .readTimeout(5, TimeUnit.SECONDS)
         .build()
 
     suspend fun lookup(barcode: String): Product? {

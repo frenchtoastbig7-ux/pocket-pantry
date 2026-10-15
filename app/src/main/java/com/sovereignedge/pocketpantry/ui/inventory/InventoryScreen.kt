@@ -105,22 +105,26 @@ fun InventoryScreen(app: PantryApp, modifier: Modifier = Modifier, onOpenSetting
         Box(Modifier.fillMaxSize().background(Color.Black)) {
             ScannerViewport(
                 Modifier.fillMaxSize(),
-                paused = lookingUp || editing != null,
-                hint = if (lookingUp) "Looking up product…" else "Point the camera at a barcode",
+                paused = editing != null,
+                hint = "Point the camera at a barcode",
             ) { code ->
-                if (lookingUp || editing != null) return@ScannerViewport
+                if (editing != null) return@ScannerViewport
+                // Open the editor at once; the product name arrives when the lookup answers (cache first, then Open Food Facts).
+                editing = newItem(barcode = code)
                 lookingUp = true
                 scope.launch {
                     val product = runCatching { app.products.lookup(code) }.getOrNull()
                     lookingUp = false
-                    editing = newItem(product, code)
-                    if (product == null) snackbar.showSnackbar("Unknown barcode. Name it once and Pocket Pantry will remember it.")
+                    val current = editing
+                    if (current != null && current.id == 0L && current.barcode == code) {
+                        if (product != null) editing = current.copy(name = current.name.ifBlank { product.name }, brand = current.brand ?: product.brand, notes = current.notes.ifBlank { product.quantityText?.let { "Pack size: $it" } ?: "" })
+                        else snackbar.showSnackbar("Unknown barcode. Name it once and Pocket Pantry will remember it.")
+                    }
                 }
             }
             Row(Modifier.statusBarsPadding().padding(8.dp)) {
                 FilledTonalIconButton(onClick = { scanning = false }) { Icon(painterResource(R.drawable.ic_close), contentDescription = "Close scanner") }
             }
-            if (lookingUp) CircularProgressIndicator(Modifier.align(Alignment.Center))
             SnackbarHost(snackbar, Modifier.align(Alignment.BottomCenter))
         }
     } else {

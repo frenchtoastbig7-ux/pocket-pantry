@@ -50,6 +50,10 @@ class SyncManager(private val context: Context, val repo: Repo, val household: H
     fun start() {
         if (isRunning || !household.isJoined) return
         val householdId = household.householdId() ?: return
+        if (!LocalNetwork.granted(context)) {
+            Log.w("PantrySync", "local network permission not granted; discovery and LAN sync will fail until it is")
+            _status.value = _status.value.copy(lastMessage = "Allow local network access to find phones on your Wi-Fi")
+        }
         server.start()
         discovery = LanDiscovery(context, householdId, household.deviceId, scope) { host, port, dev ->
             val addr = if (':' in host) "[$host]:$port" else "$host:$port"

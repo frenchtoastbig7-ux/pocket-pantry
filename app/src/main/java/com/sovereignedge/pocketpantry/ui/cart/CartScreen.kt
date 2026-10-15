@@ -136,17 +136,24 @@ fun CartScreen(app: PantryApp, modifier: Modifier = Modifier, onOpenSettings: ()
 
     fun onScanned(code: String) {
         val sessionId = currentSession?.id ?: return
-        if (lookingUp || pending != null) return
+        if (pending != null) return
         lookingUp = true
         scope.launch {
-            val product = runCatching { app.products.lookup(code) }.getOrNull()
+            // Cached products answer instantly; a remembered price means no dialog at all.
+            val cached = app.repo.product(code)
             val lastPrice = app.repo.lastPrice(store.id, code)
-            lookingUp = false
-            if (product != null && lastPrice != null) {
-                addLine(sessionId, code, product.name, lastPrice, 1.0, false, rememberName = false)
-            } else {
-                pending = PendingLine(code, product?.name ?: "", lastPrice, knownProduct = product != null)
+            if (cached != null && lastPrice != null) {
+                lookingUp = false
+                addLine(sessionId, code, cached.name, lastPrice, 1.0, false, rememberName = false)
+                return@launch
             }
+            pending = PendingLine(code, cached?.name ?: "", lastPrice, knownProduct = cached != null)
+            if (cached == null) {
+                val product = runCatching { app.products.lookup(code) }.getOrNull()
+                val current = pending
+                if (product != null && current != null && current.barcode == code) pending = current.copy(name = current.name.ifBlank { product.name }, knownProduct = true)
+            }
+            lookingUp = false
         }
     }
 
@@ -160,14 +167,13 @@ fun CartScreen(app: PantryApp, modifier: Modifier = Modifier, onOpenSettings: ()
         BackHandler { scanning = false }
         Box(Modifier.fillMaxSize().background(Color.Black)) {
             ScannerViewport(
-                Modifier.fillMaxSize(), paused = lookingUp || pending != null,
+                Modifier.fillMaxSize(), paused = pending != null,
                 hint = "",
                 onBarcode = ::onScanned,
             )
             Row(Modifier.statusBarsPadding().padding(8.dp)) {
                 FilledTonalIconButton(onClick = { scanning = false }) { Icon(painterResource(R.drawable.ic_close), contentDescription = "Close scanner") }
             }
-            if (lookingUp) CircularProgressIndicator(Modifier.align(Alignment.Center))
             Surface(Modifier.align(Alignment.BottomCenter).fillMaxWidth().navigationBarsPadding(), tonalElevation = 3.dp) {
                 Row(Modifier.padding(16.dp), verticalAlignment = Alignment.CenterVertically) {
                     Column(Modifier.weight(1f)) {
@@ -266,7 +272,7 @@ fun CartScreen(app: PantryApp, modifier: Modifier = Modifier, onOpenSettings: ()
 
     pending?.let { p ->
         LineDialog(
-            title = if (p.barcode == null) "Add item" else if (p.knownProduct) "Price for ${p.name}" else "New product",
+            title = if (p.barcode == null) "Add item" else if (p.knownProduct) "Price for ${p.name}" else if (lookingUp) "Looking up product…" else "New product",
             barcode = p.barcode, initialName = p.name, initialPrice = p.price, initialQty = 1.0, initialTaxable = false,
             currency = currency, onDismiss = { pending = null },
             onConfirm = { name, price, qty, taxable ->
@@ -323,6 +329,7 @@ private fun LineDialog(
     var price by rememberSaveable { mutableStateOf(initialPrice?.let { "%.2f".format(it) } ?: "") }
     var qty by rememberSaveable { mutableStateOf(fmtNumber(initialQty)) }
     var taxable by rememberSaveable { mutableStateOf(initialTaxable) }
+    LaunchedEffect(initialName) { if (name.isBlank()) name = initialName }
     val valid = name.isNotBlank() && parseNumber(price) != null && (parseNumber(qty) ?: 0.0) > 0
     AlertDialog(
         onDismissRequest = onDismiss,
