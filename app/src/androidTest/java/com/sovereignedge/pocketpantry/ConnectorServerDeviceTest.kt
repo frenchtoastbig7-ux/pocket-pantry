@@ -43,12 +43,14 @@ class ConnectorServerDeviceTest {
     private class Response(val status: Int, val body: String, val session: String?)
 
     /** Plain HTTP/1.1 over a socket; the app's cleartext policy only governs its own outgoing requests. */
+    private var hostHeader = "127.0.0.1"
+
     private fun post(json: String, auth: String?, session: String? = null): Response {
         val payload = json.toByteArray()
         Socket("127.0.0.1", port).use { socket ->
             socket.soTimeout = 10_000
             val head = buildString {
-                append("POST /mcp HTTP/1.1\r\nHost: 127.0.0.1:$port\r\nContent-Type: application/json\r\nAccept: application/json, text/event-stream\r\n")
+                append("POST /mcp HTTP/1.1\r\nHost: $hostHeader:$port\r\nContent-Type: application/json\r\nAccept: application/json, text/event-stream\r\n")
                 auth?.let { append("Authorization: $it\r\n") }
                 session?.let { append("Mcp-Session-Id: $it\r\n") }
                 append("Content-Length: ${payload.size}\r\nConnection: close\r\n\r\n")
@@ -112,5 +114,16 @@ class ConnectorServerDeviceTest {
         assertTrue(call(session, 8, "add_to_shopping_list", """{"items":[{"name":"Eggs","quantity":"12"},{"name":"Butter"}]}""").contains("Added 2"))
         assertEquals(listOf("Butter", "Eggs"), repo.shoppingListNow().map { it.name }.sorted())
         assertTrue(calls.containsAll(listOf("add_item", "list_inventory", "update_item", "remove_item", "add_to_shopping_list")))
+    }
+
+    /** Claude Code addresses the phone by its Tailscale IP; the SDK's DNS-rebinding guard must accept the bound host. */
+    @Test
+    fun acceptsRequestsAddressedToTheBoundHostOnly() {
+        val bearer = "Bearer $token"
+        hostHeader = "127.0.0.1"
+        assertEquals(200, post("""{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-06-18","capabilities":{},"clientInfo":{"name":"t","version":"1"}}}""", bearer).status)
+        hostHeader = "100.64.0.1"
+        val other = post("""{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-06-18","capabilities":{},"clientInfo":{"name":"t","version":"1"}}}""", bearer)
+        assertTrue("unbound host must be rejected: ${other.status} ${other.body}", other.status == 403 || other.body.contains("Invalid Host"))
     }
 }

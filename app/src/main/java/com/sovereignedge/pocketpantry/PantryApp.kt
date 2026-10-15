@@ -49,6 +49,11 @@ class PantryApp : Application(), CameraXConfig.Provider {
     fun onActivityStarted() {
         foregrounded = true
         sync.start()
+        // A foreground service may not start from Application.onCreate after an upgrade or reboot; the foreground
+        // Activity may start it, so bring the connector back here whenever it's enabled but not running.
+        if (settings.current.connectorEnabled && com.sovereignedge.pocketpantry.bridge.ConnectorService.status.value == com.sovereignedge.pocketpantry.bridge.ConnectorService.Status.Stopped) {
+            com.sovereignedge.pocketpantry.bridge.ConnectorService.start(this)
+        }
     }
 
     fun onActivityStopped() {

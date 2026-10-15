@@ -64,7 +64,9 @@ class ConnectorServer(
                     finish()
                 }
             }
-            mcpStreamableHttp { mcpServer }
+            // The SDK's DNS-rebinding guard only allows localhost by default, which rejected every request addressed to
+            // the Tailscale address with "Invalid Host". Allow exactly the address we are bound to (plus loopback for USB).
+            mcpStreamableHttp(allowedHosts = listOf(host, "127.0.0.1", "localhost", "[::1]")) { mcpServer }
         }.start(wait = false)
     }
 
