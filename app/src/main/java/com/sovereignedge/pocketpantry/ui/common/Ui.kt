@@ -1,7 +1,10 @@
 package com.sovereignedge.pocketpantry.ui.common
 
 import androidx.annotation.DrawableRes
+import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.ui.unit.sp
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -136,5 +139,88 @@ fun SectionHeader(text: String, modifier: Modifier = Modifier) {
         style = MaterialTheme.typography.titleSmall,
         color = MaterialTheme.colorScheme.primary,
         modifier = modifier.padding(start = 16.dp, end = 16.dp, top = 20.dp, bottom = 6.dp),
+    )
+}
+
+// ---------- Shared building blocks for the restyled screens ----------
+
+/** A collapsing large-title app bar; pair with [androidx.compose.ui.input.nestedscroll.nestedScroll] on the Scaffold. */
+@androidx.compose.material3.ExperimentalMaterial3Api
+@Composable
+fun BigTitleBar(
+    title: String,
+    scrollBehavior: androidx.compose.material3.TopAppBarScrollBehavior,
+    subtitle: String? = null,
+    navigationIcon: @Composable () -> Unit = {},
+    actions: @Composable androidx.compose.foundation.layout.RowScope.() -> Unit = {},
+) {
+    androidx.compose.material3.LargeTopAppBar(
+        title = {
+            Column {
+                Text(title, maxLines = 1, overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis)
+                if (subtitle != null) Text(subtitle, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1)
+            }
+        },
+        navigationIcon = navigationIcon,
+        actions = actions,
+        scrollBehavior = scrollBehavior,
+        colors = androidx.compose.material3.TopAppBarDefaults.largeTopAppBarColors(
+            scrolledContainerColor = MaterialTheme.colorScheme.surfaceContainer,
+        ),
+    )
+}
+
+/** A rounded tonal surface used to group content (settings sections, totals, summaries). */
+@Composable
+fun Tile(
+    modifier: Modifier = Modifier,
+    tone: androidx.compose.ui.graphics.Color = MaterialTheme.colorScheme.surfaceContainerLow,
+    content: @Composable androidx.compose.foundation.layout.ColumnScope.() -> Unit,
+) {
+    androidx.compose.material3.Surface(modifier = modifier, shape = MaterialTheme.shapes.large, color = tone) {
+        Column(content = content)
+    }
+}
+
+/** A small rounded pill with a label, e.g. "Expires in 2 d". */
+@Composable
+fun Pill(text: String, container: androidx.compose.ui.graphics.Color, onContainer: androidx.compose.ui.graphics.Color) {
+    androidx.compose.material3.Surface(shape = RoundedCornerShape(999.dp), color = container) {
+        Text(text, style = MaterialTheme.typography.labelMedium, color = onContainer, modifier = Modifier.padding(horizontal = 10.dp, vertical = 4.dp))
+    }
+}
+
+/** A circular monogram for an item or recipe. */
+@Composable
+fun Monogram(text: String, modifier: Modifier = Modifier, size: androidx.compose.ui.unit.Dp = 44.dp) {
+    androidx.compose.foundation.layout.Box(
+        modifier.size(size).background(MaterialTheme.colorScheme.secondaryContainer, androidx.compose.foundation.shape.CircleShape),
+        contentAlignment = Alignment.Center,
+    ) {
+        Text(
+            text.trim().take(1).uppercase().ifBlank { "·" },
+            style = MaterialTheme.typography.titleMedium,
+            color = MaterialTheme.colorScheme.onSecondaryContainer,
+        )
+    }
+}
+
+/** A stat for summary strips: big number over a caption. */
+@Composable
+fun Stat(value: String, caption: String, modifier: Modifier = Modifier, accent: androidx.compose.ui.graphics.Color = MaterialTheme.colorScheme.onSurface) {
+    Column(modifier) {
+        Text(value, style = MaterialTheme.typography.headlineMedium, color = accent)
+        Text(caption, style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+    }
+}
+
+/** The old plain section header, restyled to sit above a [Tile]. */
+@Composable
+fun GroupLabel(text: String, modifier: Modifier = Modifier) {
+    Text(
+        text.uppercase(),
+        style = MaterialTheme.typography.labelMedium.copy(letterSpacing = 1.sp),
+        color = MaterialTheme.colorScheme.primary,
+        modifier = modifier.padding(start = 24.dp, end = 24.dp, top = 24.dp, bottom = 8.dp),
     )
 }

@@ -9,6 +9,7 @@ import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.conflate
 import kotlinx.coroutines.flow.filter
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.flowOn
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.onStart
@@ -306,6 +307,40 @@ class Repo(context: Context, val deviceId: String, dbName: String = "pantry.db")
             }
         }
         return merged
+    }
+
+    /** Debug builds only: fills the household with a realistic sample so screens can be reviewed. */
+    suspend fun seedDemo(): Long {
+        val locs = locations().first().associateBy { it.name }
+        val today = java.time.LocalDate.now()
+        fun loc(name: String) = locs[name]?.id ?: locs.values.first().id
+        listOf(
+            Item(0, "Greek yogurt", null, "Fage", 2.0, "", "500 g", loc("Fridge"), today.plusDays(2).toEpochDay(), "", null, 0, 0),
+            Item(0, "Whole milk", null, "Organic Valley", 1.0, "L", "", loc("Fridge"), today.plusDays(6).toEpochDay(), "", 1.0, 0, 0),
+            Item(0, "Cherry tomatoes", null, null, 1.0, "", "250 g", loc("Fridge"), today.minusDays(1).toEpochDay(), "", null, 0, 0),
+            Item(0, "Arborio rice", null, "Riso Gallo", 1.0, "", "1 kg", loc("Pantry"), null, "", null, 0, 0),
+            Item(0, "Chickpeas", null, "Goya", 4.0, "cans", "15 oz", loc("Pantry"), null, "", 2.0, 0, 0),
+            Item(0, "Olive oil", null, "Colavita", 1.0, "", "750 ml", loc("Counter"), null, "Extra virgin", null, 0, 0),
+            Item(0, "Bananas", null, null, 5.0, "", "", loc("Counter"), today.plusDays(3).toEpochDay(), "", null, 0, 0),
+            Item(0, "Peas", null, "Birds Eye", 2.0, "bags", "400 g", loc("Freezer"), null, "", null, 0, 0),
+            Item(0, "Salmon fillets", null, null, 0.0, "", "2 × 150 g", loc("Freezer"), null, "", 1.0, 0, 0),
+        ).forEach { upsertItem(it) }
+        addToShoppingList("Eggs", "12"); addToShoppingList("Spinach", "1 bag"); addToShoppingList("Lemons", "3"); addToShoppingList("Parmesan")
+        shoppingListNow().firstOrNull { it.name == "Parmesan" }?.let { setChecked(it.id, true) }
+        val storeId = saveStore(Store(0, "Safeway", 8.75))
+        val session = startSession(storeId)
+        addCartLine(CartLine(0, session, "049000006346", "Coca-Cola 12 pack", 7.99, 1.0, true))
+        addCartLine(CartLine(0, session, null, "Sourdough loaf", 4.49, 1.0, false))
+        addCartLine(CartLine(0, session, null, "Avocados", 1.25, 4.0, false))
+        finishSession(CartSession(session, storeId, System.currentTimeMillis() - 3_600_000, null))
+        // A trip in progress, so the cart screen has lines to show.
+        val open = startSession(storeId)
+        addCartLine(CartLine(0, open, null, "Sourdough loaf", 4.49, 1.0, false))
+        addCartLine(CartLine(0, open, null, "Avocados", 1.25, 4.0, false))
+        addCartLine(CartLine(0, open, "049000006346", "Coca-Cola 12 pack", 7.99, 1.0, true))
+        saveRecipe("Lemon tuna spaghetti", "# Lemon tuna spaghetti\n\n## Ingredients\n- 200 g spaghetti\n- 1 can tuna\n- Cherry tomatoes\n- Lemon\n\n## Method\n1. Boil the pasta.\n2. Toss with everything else.", "", rating = 4)
+        saveRecipe("Chickpea curry", "# Chickpea curry\n\n## Ingredients\n- 2 cans chickpeas\n- Coconut milk\n\n## Method\n1. Simmer 20 minutes.", "", rating = 5)
+        return storeId
     }
 
     /** True when nothing but the seeded defaults exists, so joining a household can start from the other phone's data. */

@@ -51,7 +51,10 @@ import com.sovereignedge.pocketpantry.ui.cart.StoreDialog
 import com.sovereignedge.pocketpantry.ui.common.AppIcon
 import com.sovereignedge.pocketpantry.ui.common.AppIconButton
 import com.sovereignedge.pocketpantry.ui.common.ConfirmDialog
-import com.sovereignedge.pocketpantry.ui.common.SectionHeader
+import com.sovereignedge.pocketpantry.ui.common.GroupLabel
+import com.sovereignedge.pocketpantry.ui.common.Tile
+import androidx.compose.material3.ListItemDefaults
+import androidx.compose.ui.graphics.Color
 import com.sovereignedge.pocketpantry.ui.common.TextPromptDialog
 import com.sovereignedge.pocketpantry.ui.common.fmtNumber
 import kotlinx.coroutines.launch
@@ -85,16 +88,21 @@ fun SettingsScreen(app: PantryApp, onBack: () -> Unit, onOpenHousehold: () -> Un
         topBar = { TopAppBar(title = { Text("Settings") }, navigationIcon = { AppIconButton(R.drawable.ic_arrow_back, "Back", onClick = onBack) }) },
     ) { padding ->
         Column(Modifier.padding(padding).fillMaxSize().verticalScroll(rememberScrollState())) {
-            SectionHeader("Household")
+            GroupLabel("Household")
+            Tile(Modifier.padding(horizontal = 16.dp).fillMaxWidth()) {
             ListItem(
+                colors = ListItemDefaults.colors(containerColor = Color.Transparent),
                 modifier = Modifier.clickable(onClick = onOpenHousehold),
                 headlineContent = { Text("Household sync") },
                 supportingContent = { Text(if (hh.joined) "Sharing the pantry, lists, stores and recipes with your household" else "Share one pantry with the people you live with, phone to phone, no account") },
                 trailingContent = { AppIcon(R.drawable.ic_arrow_forward, null) },
             )
+            }
 
-            SectionHeader("Claude")
+            GroupLabel("Claude")
+            Tile(Modifier.padding(horizontal = 16.dp).fillMaxWidth()) {
             ListItem(
+                colors = ListItemDefaults.colors(containerColor = Color.Transparent),
                 modifier = Modifier.clickable(onClick = onOpenConnector),
                 headlineContent = { Text("Claude connector") },
                 supportingContent = { Text(if (settings.connectorEnabled) "On: Claude Code on your computer can read and update the pantry over Tailscale" else "Let Claude Code or Claude Desktop use the pantry on your own subscription, no API key") },
@@ -137,9 +145,12 @@ fun SettingsScreen(app: PantryApp, onBack: () -> Unit, onOpenHousehold: () -> Un
                     if (settings.hasApiKey) TextButton(onClick = { confirmForget = true }) { Text("Forget") }
                 }
                 testResult?.let { Text(it, style = MaterialTheme.typography.bodyMedium) }
+                Spacer(Modifier.height(8.dp))
+            }
             }
 
-            SectionHeader("Model")
+            GroupLabel("Model")
+            Tile(Modifier.padding(horizontal = 16.dp).fillMaxWidth()) {
             Settings.MODELS.forEach { (id, label) ->
                 Row(Modifier.fillMaxWidth().clickable { app.settings.setModel(id) }.padding(horizontal = 8.dp), verticalAlignment = Alignment.CenterVertically) {
                     RadioButton(selected = settings.model == id, onClick = { app.settings.setModel(id) })
@@ -157,9 +168,11 @@ fun SettingsScreen(app: PantryApp, onBack: () -> Unit, onOpenHousehold: () -> Un
                     }
                 }
             }
-            Text("Higher effort thinks longer for better meal plans and costs more per request.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.padding(horizontal = 16.dp))
+            Text("Higher effort thinks longer for better meal plans and costs more per request.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.padding(start = 16.dp, end = 16.dp, bottom = 14.dp))
+            }
 
-            SectionHeader("Appearance")
+            GroupLabel("Appearance")
+            Tile(Modifier.padding(horizontal = 16.dp).fillMaxWidth()) {
             SingleChoiceSegmentedButtonRow(Modifier.padding(horizontal = 16.dp, vertical = 6.dp).fillMaxWidth()) {
                 Settings.THEME_MODES.forEachIndexed { index, (id, label) ->
                     SegmentedButton(selected = settings.themeMode == id, onClick = { app.settings.setThemeMode(id) }, shape = SegmentedButtonDefaults.itemShape(index, Settings.THEME_MODES.size)) {
@@ -167,10 +180,12 @@ fun SettingsScreen(app: PantryApp, onBack: () -> Unit, onOpenHousehold: () -> Un
                     }
                 }
             }
-            Text("Colours follow your wallpaper (Material You) in both light and dark.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.padding(horizontal = 16.dp))
+            Text("Colours follow your wallpaper (Material You) in both light and dark.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.padding(start = 16.dp, end = 16.dp, bottom = 14.dp))
+            }
 
-            SectionHeader("Cooking preferences")
-            Column(Modifier.padding(horizontal = 16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+            GroupLabel("Cooking preferences")
+            Tile(Modifier.padding(horizontal = 16.dp).fillMaxWidth()) {
+            Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
                 OutlinedTextField(
                     value = diet, onValueChange = { diet = it; app.settings.setDietaryNotes(it) }, modifier = Modifier.fillMaxWidth(), minLines = 2,
                     label = { Text("Dietary notes, allergies, dislikes") }, placeholder = { Text("e.g. vegetarian, no peanuts, kids hate mushrooms") },
@@ -180,10 +195,13 @@ fun SettingsScreen(app: PantryApp, onBack: () -> Unit, onOpenHousehold: () -> Un
                     label = { Text("Household") }, placeholder = { Text("e.g. 2 adults, 1 toddler; weeknights are busy") },
                 )
             }
+            }
 
-            SectionHeader("Stores")
+            GroupLabel("Stores")
+            Tile(Modifier.padding(horizontal = 16.dp).fillMaxWidth()) {
             stores.forEach { store ->
                 ListItem(
+                    colors = ListItemDefaults.colors(containerColor = Color.Transparent),
                     headlineContent = { Text(store.name) },
                     supportingContent = { Text(if (store.taxRate > 0) "Tax ${fmtNumber(store.taxRate)}%" else "No tax") },
                     trailingContent = {
@@ -197,12 +215,15 @@ fun SettingsScreen(app: PantryApp, onBack: () -> Unit, onOpenHousehold: () -> Un
             TextButton(onClick = { editStore = Store(0, "", 0.0) }, modifier = Modifier.padding(horizontal = 8.dp)) { Text("Add store") }
             OutlinedTextField(
                 value = currency, onValueChange = { currency = it; app.settings.setCurrency(it) }, singleLine = true,
-                label = { Text("Currency symbol") }, modifier = Modifier.padding(horizontal = 16.dp).fillMaxWidth(),
+                label = { Text("Currency symbol") }, modifier = Modifier.padding(start = 16.dp, end = 16.dp, bottom = 16.dp).fillMaxWidth(),
             )
+            }
 
-            SectionHeader("Storage locations")
+            GroupLabel("Storage locations")
+            Tile(Modifier.padding(horizontal = 16.dp).fillMaxWidth()) {
             locations.forEach { loc ->
                 ListItem(
+                    colors = ListItemDefaults.colors(containerColor = Color.Transparent),
                     headlineContent = { Text(loc.name) },
                     trailingContent = {
                         Row {
@@ -213,14 +234,16 @@ fun SettingsScreen(app: PantryApp, onBack: () -> Unit, onOpenHousehold: () -> Un
                 )
             }
             TextButton(onClick = { addLocation = true }, modifier = Modifier.padding(horizontal = 8.dp)) { Text("Add location") }
+            }
 
-            SectionHeader("Data")
+            GroupLabel("Data")
+            Tile(Modifier.padding(horizontal = 16.dp).fillMaxWidth()) {
             Text(
-                "Everything stays on this phone. There is no account and no sync. Deleting the app deletes the data.",
-                style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.padding(horizontal = 16.dp),
+                "Everything stays on this phone (and on the other phones in your household). Deleting the app deletes the data.",
+                style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.padding(start = 16.dp, end = 16.dp, top = 12.dp),
             )
             TextButton(onClick = { confirmWipe = true }, modifier = Modifier.padding(horizontal = 8.dp)) { Text("Delete all data", color = MaterialTheme.colorScheme.error) }
-            HorizontalDivider(Modifier.padding(vertical = 8.dp))
+            }
             Text(
                 "Pocket Pantry ${BuildConfig.VERSION_NAME} · Product names via Open Food Facts (ODbL).",
                 style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.padding(16.dp),

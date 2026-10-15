@@ -18,6 +18,7 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
@@ -38,6 +39,14 @@ import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.SuggestionChip
 import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBar
+import androidx.compose.material3.TopAppBarDefaults
+import androidx.compose.material3.Surface
+import androidx.compose.ui.input.nestedscroll.nestedScroll
+import com.sovereignedge.pocketpantry.ui.common.BigTitleBar
+import com.sovereignedge.pocketpantry.ui.common.Monogram
+import com.sovereignedge.pocketpantry.ui.common.Pill
+import com.sovereignedge.pocketpantry.ui.common.Stat
+import com.sovereignedge.pocketpantry.ui.common.Tile
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -128,20 +137,16 @@ fun InventoryScreen(app: PantryApp, modifier: Modifier = Modifier, onOpenSetting
             SnackbarHost(snackbar, Modifier.align(Alignment.BottomCenter))
         }
     } else {
+        val scrollBehavior = TopAppBarDefaults.exitUntilCollapsedScrollBehavior()
         Scaffold(
-            modifier = modifier,
+            modifier = modifier.nestedScroll(scrollBehavior.nestedScrollConnection),
             contentWindowInsets = WindowInsets(0, 0, 0, 0),
             snackbarHost = { SnackbarHost(snackbar) },
             topBar = {
-                TopAppBar(
-                    title = {
-                        if (searching) {
-                            OutlinedTextField(
-                                value = query, onValueChange = { query = it }, singleLine = true,
-                                placeholder = { Text("Search pantry") }, modifier = Modifier.fillMaxWidth(),
-                            )
-                        } else Text("Pantry")
-                    },
+                BigTitleBar(
+                    title = "Pantry",
+                    subtitle = if (items.isEmpty()) null else "${items.size} item${if (items.size == 1) "" else "s"}" + (if (expiringSoon > 0) " · $expiringSoon expiring soon" else "") + (if (low > 0) " · $low low" else ""),
+                    scrollBehavior = scrollBehavior,
                     actions = {
                         AppIconButton(if (searching) R.drawable.ic_close else R.drawable.ic_search, "Search") {
                             searching = !searching
@@ -163,7 +168,14 @@ fun InventoryScreen(app: PantryApp, modifier: Modifier = Modifier, onOpenSetting
             },
         ) { padding ->
             Column(Modifier.padding(padding).fillMaxSize()) {
-                LazyRow(contentPadding = PaddingValues(horizontal = 16.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                if (searching) {
+                    OutlinedTextField(
+                        value = query, onValueChange = { query = it }, singleLine = true, shape = MaterialTheme.shapes.large,
+                        placeholder = { Text("Search pantry") }, leadingIcon = { Icon(painterResource(R.drawable.ic_search), null) },
+                        modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 4.dp),
+                    )
+                }
+                LazyRow(contentPadding = PaddingValues(horizontal = 16.dp, vertical = 6.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     item { FilterChip(selected = filter == null, onClick = { filter = null }, label = { Text("All (${items.size})") }) }
                     items(locations, key = { it.id }) { loc ->
                         val count = items.count { it.locationId == loc.id }
@@ -171,17 +183,21 @@ fun InventoryScreen(app: PantryApp, modifier: Modifier = Modifier, onOpenSetting
                     }
                 }
                 if (expiringSoon > 0 || low > 0) {
-                    FlowRow(Modifier.padding(horizontal = 16.dp, vertical = 4.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                        if (expiringSoon > 0) SuggestionChip(onClick = { query = ""; filter = null }, label = { Text("$expiringSoon expiring soon") })
-                        if (low > 0) AssistChip(
-                            onClick = {
-                                scope.launch {
-                                    items.filter { it.isLow }.forEach { app.repo.addToShoppingList(it.name, barcode = it.barcode) }
-                                    snackbar.showSnackbar("Added $low low item${if (low == 1) "" else "s"} to the shopping list")
-                                }
-                            },
-                            label = { Text("$low running low · add to list") },
-                        )
+                    Tile(Modifier.padding(horizontal = 16.dp, vertical = 6.dp).fillMaxWidth(), tone = MaterialTheme.colorScheme.surfaceContainerHigh) {
+                        Row(Modifier.padding(horizontal = 20.dp, vertical = 14.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(24.dp)) {
+                            Stat("$expiringSoon", "expiring soon", accent = if (expiringSoon > 0) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurface)
+                            Stat("$low", "running low", accent = if (low > 0) MaterialTheme.colorScheme.tertiary else MaterialTheme.colorScheme.onSurface)
+                            Spacer(Modifier.weight(1f))
+                            if (low > 0) AssistChip(
+                                onClick = {
+                                    scope.launch {
+                                        items.filter { it.isLow }.forEach { app.repo.addToShoppingList(it.name, barcode = it.barcode) }
+                                        snackbar.showSnackbar("Added $low low item${if (low == 1) "" else "s"} to the shopping list")
+                                    }
+                                },
+                                label = { Text("Add low to list") },
+                            )
+                        }
                     }
                 }
                 if (visible.isEmpty()) {
@@ -192,19 +208,19 @@ fun InventoryScreen(app: PantryApp, modifier: Modifier = Modifier, onOpenSetting
                         else "Try another location or search term.",
                     )
                 } else {
-                    LazyColumn(Modifier.fillMaxSize(), contentPadding = PaddingValues(bottom = 160.dp)) {
+                    LazyColumn(Modifier.fillMaxSize(), contentPadding = PaddingValues(start = 16.dp, end = 16.dp, bottom = 160.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                         val grouped = if (filter == null) locations.mapNotNull { loc -> visible.filter { it.locationId == loc.id }.takeIf { it.isNotEmpty() }?.let { loc to it } }
                         else listOf((locations.firstOrNull { it.id == filter } ?: Location(0, "", 0)) to visible)
                         for ((loc, group) in grouped) {
                             if (filter == null) item(key = "h${loc.id}") {
                                 Text(
-                                    loc.name, style = MaterialTheme.typography.titleSmall, color = MaterialTheme.colorScheme.primary,
-                                    modifier = Modifier.padding(start = 16.dp, top = 16.dp, bottom = 4.dp),
+                                    "${loc.name} · ${group.size}", style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.primary,
+                                    modifier = Modifier.padding(start = 8.dp, top = 12.dp, bottom = 2.dp).animateItem(),
                                 )
                             }
                             items(group, key = { it.id }) { item ->
                                 ItemRow(
-                                    item = item, today = today,
+                                    item = item, today = today, modifier = Modifier.animateItem(),
                                     onClick = { editing = item },
                                     onAdjust = { delta -> scope.launch { app.repo.adjustQuantity(item.id, delta) } },
                                 )
@@ -239,8 +255,9 @@ fun InventoryScreen(app: PantryApp, modifier: Modifier = Modifier, onOpenSetting
     }
 }
 
+@OptIn(ExperimentalLayoutApi::class)
 @Composable
-private fun ItemRow(item: Item, today: LocalDate, onClick: () -> Unit, onAdjust: (Double) -> Unit) {
+private fun ItemRow(item: Item, today: LocalDate, modifier: Modifier = Modifier, onClick: () -> Unit, onAdjust: (Double) -> Unit) {
     val days = item.daysUntilExpiry(today)
     val expiryLabel = when {
         days == null -> null
@@ -249,29 +266,29 @@ private fun ItemRow(item: Item, today: LocalDate, onClick: () -> Unit, onAdjust:
         days <= 7 -> "Expires in $days d"
         else -> null
     }
-    val warn = days != null && days <= 3
-    ListItem(
-        modifier = Modifier.clickable(onClick = onClick),
-        headlineContent = { Text(item.name) },
-        supportingContent = {
-            val parts = buildList {
-                item.brand?.let { add(it) }
-                if (item.size.isNotBlank()) add(item.size)
-                expiryLabel?.let { add(it) }
-                if (item.isLow) add("Running low")
+    val urgent = days != null && days <= 3
+    val scheme = MaterialTheme.colorScheme
+    Surface(modifier = modifier.fillMaxWidth().clickable(onClick = onClick), shape = MaterialTheme.shapes.medium, color = scheme.surfaceContainerLow) {
+        Row(Modifier.padding(start = 12.dp, end = 8.dp, top = 10.dp, bottom = 10.dp), verticalAlignment = Alignment.CenterVertically) {
+            Monogram(item.name)
+            Column(Modifier.weight(1f).padding(horizontal = 12.dp), verticalArrangement = Arrangement.spacedBy(3.dp)) {
+                Text(item.name, style = MaterialTheme.typography.titleMedium, maxLines = 2)
+                val detail = listOfNotNull(item.brand, item.size.takeIf { it.isNotBlank() }).joinToString(" · ")
+                if (detail.isNotBlank()) Text(detail, style = MaterialTheme.typography.bodySmall, color = scheme.onSurfaceVariant, maxLines = 1)
+                if (expiryLabel != null || item.isLow) {
+                    FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                        expiryLabel?.let { Pill(it, if (urgent) scheme.errorContainer else scheme.tertiaryContainer, if (urgent) scheme.onErrorContainer else scheme.onTertiaryContainer) }
+                        if (item.isLow) Pill("Low", scheme.secondaryContainer, scheme.onSecondaryContainer)
+                    }
+                }
             }
-            if (parts.isNotEmpty()) Text(
-                parts.joinToString(" · "),
-                color = if (warn || item.isLow) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurfaceVariant,
-            )
-        },
-        trailingContent = {
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                AppIconButton(R.drawable.ic_remove, "Use one", onClick = { onAdjust(-1.0) }, enabled = item.quantity > 0)
-                Text((fmtNumber(item.quantity) + " " + item.unit).trim(), style = MaterialTheme.typography.titleMedium, modifier = Modifier.width(56.dp), textAlign = androidx.compose.ui.text.style.TextAlign.Center)
-                AppIconButton(R.drawable.ic_add, "Add one", onClick = { onAdjust(1.0) })
+            Surface(shape = MaterialTheme.shapes.extraLarge, color = scheme.surfaceContainerHighest) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    AppIconButton(R.drawable.ic_remove, "Use one", onClick = { onAdjust(-1.0) }, enabled = item.quantity > 0)
+                    Text((fmtNumber(item.quantity) + " " + item.unit).trim(), style = MaterialTheme.typography.titleMedium, textAlign = androidx.compose.ui.text.style.TextAlign.Center, modifier = Modifier.widthIn(min = 28.dp))
+                    AppIconButton(R.drawable.ic_add, "Add one", onClick = { onAdjust(1.0) })
+                }
             }
-        },
-    )
-    Spacer(Modifier.height(0.dp))
+        }
+    }
 }

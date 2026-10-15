@@ -5,6 +5,7 @@ import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.PickVisualMediaRequest
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.Image
+import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -13,6 +14,8 @@ import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import com.sovereignedge.pocketpantry.ui.common.Photos
+import com.sovereignedge.pocketpantry.ui.common.Tile
+import androidx.compose.material3.Surface
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import androidx.compose.foundation.clickable
@@ -189,14 +192,22 @@ fun RecipesScreen(app: PantryApp, modifier: Modifier = Modifier, onOpenSettings:
                 if (recipes.isEmpty()) {
                     EmptyState(R.drawable.ic_bookmark, "No saved recipes", "Tap Save under any reply from Claude to keep it here, with or without a connection.")
                 } else {
-                    LazyColumn(Modifier.fillMaxSize()) {
+                    LazyColumn(Modifier.fillMaxSize(), contentPadding = PaddingValues(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
                         items(recipes, key = { it.id }) { recipe ->
-                            ListItem(
-                                modifier = Modifier.clickable { openRecipe = recipe },
-                                headlineContent = { Text(recipe.title) },
-                                supportingContent = { Text((if (recipe.rating > 0) "★".repeat(recipe.rating) + "☆".repeat(5 - recipe.rating) + " · " else "") + fmtDateTime(recipe.createdAt)) },
-                                leadingContent = { RecipeThumb(app, recipe) },
-                            )
+                            Surface(
+                                modifier = Modifier.fillMaxWidth().animateItem().clickable { openRecipe = recipe },
+                                shape = MaterialTheme.shapes.large, color = MaterialTheme.colorScheme.surfaceContainerLow,
+                            ) {
+                                Row(Modifier.padding(12.dp), verticalAlignment = Alignment.CenterVertically) {
+                                    RecipeThumb(app, recipe)
+                                    Column(Modifier.weight(1f).padding(start = 14.dp)) {
+                                        Text(recipe.title, style = MaterialTheme.typography.titleMedium, maxLines = 2)
+                                        if (recipe.rating > 0) Text("★".repeat(recipe.rating) + "☆".repeat(5 - recipe.rating), color = MaterialTheme.colorScheme.primary, style = MaterialTheme.typography.bodyMedium)
+                                        Text(fmtDateTime(recipe.createdAt), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                    }
+                                    Icon(painterResource(R.drawable.ic_arrow_forward), contentDescription = null, tint = MaterialTheme.colorScheme.onSurfaceVariant)
+                                }
+                            }
                         }
                     }
                 }
@@ -230,7 +241,7 @@ fun RecipesScreen(app: PantryApp, modifier: Modifier = Modifier, onOpenSettings:
                 }
                 Row(Modifier.padding(12.dp), verticalAlignment = Alignment.Bottom, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     OutlinedTextField(
-                        value = input, onValueChange = { input = it }, modifier = Modifier.weight(1f), maxLines = 4,
+                        value = input, onValueChange = { input = it }, modifier = Modifier.weight(1f), maxLines = 4, shape = MaterialTheme.shapes.large,
                         placeholder = { Text("Ask for a recipe or meal plan…") },
                     )
                     if (chatState.streaming) {
@@ -272,24 +283,32 @@ fun RecipesScreen(app: PantryApp, modifier: Modifier = Modifier, onOpenSettings:
 private fun MessageBubble(message: ChatMessage, text: String, streaming: Boolean, extracting: Boolean, onSave: () -> Unit, onAddToList: () -> Unit) {
     if (message.isUser) {
         Box(Modifier.fillMaxWidth(), contentAlignment = Alignment.CenterEnd) {
-            Card(colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.primaryContainer), modifier = Modifier.fillMaxWidth(0.85f)) {
-                Text(text, Modifier.padding(12.dp), style = MaterialTheme.typography.bodyLarge)
+            Surface(
+                shape = RoundedCornerShape(topStart = 22.dp, topEnd = 22.dp, bottomStart = 22.dp, bottomEnd = 6.dp),
+                color = MaterialTheme.colorScheme.primaryContainer, modifier = Modifier.fillMaxWidth(0.85f),
+            ) {
+                Text(text, Modifier.padding(horizontal = 16.dp, vertical = 12.dp), style = MaterialTheme.typography.bodyLarge, color = MaterialTheme.colorScheme.onPrimaryContainer)
             }
         }
     } else {
-        Column(Modifier.fillMaxWidth()) {
-            if (text.isBlank() && streaming) {
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    CircularProgressIndicator(Modifier.size(18.dp), strokeWidth = 2.dp)
-                    Text("  Claude is thinking…", color = MaterialTheme.colorScheme.onSurfaceVariant)
+        Surface(
+            shape = RoundedCornerShape(topStart = 6.dp, topEnd = 22.dp, bottomStart = 22.dp, bottomEnd = 22.dp),
+            color = MaterialTheme.colorScheme.surfaceContainerLow, modifier = Modifier.fillMaxWidth(),
+        ) {
+            Column(Modifier.padding(start = 16.dp, end = 16.dp, top = 12.dp, bottom = 4.dp)) {
+                if (text.isBlank() && streaming) {
+                    Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(bottom = 8.dp)) {
+                        CircularProgressIndicator(Modifier.size(18.dp), strokeWidth = 2.dp)
+                        Text("  Claude is thinking…", color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    }
+                } else {
+                    Markdown(text)
                 }
-            } else {
-                Markdown(text)
-            }
-            if (!streaming && text.isNotBlank()) {
-                Row {
-                    TextButton(onClick = onSave) { Text("Save") }
-                    TextButton(onClick = onAddToList, enabled = !extracting) { Text("Add missing to list") }
+                if (!streaming && text.isNotBlank()) {
+                    Row {
+                        TextButton(onClick = onSave) { Text("Save") }
+                        TextButton(onClick = onAddToList, enabled = !extracting) { Text("Add missing to list") }
+                    }
                 }
             }
         }
@@ -329,8 +348,10 @@ private fun RecipeThumb(app: PantryApp, recipe: Recipe) {
     var bitmap by remember(file) { mutableStateOf<android.graphics.Bitmap?>(null) }
     LaunchedEffect(file) { bitmap = file?.let { f -> withContext(Dispatchers.IO) { android.graphics.BitmapFactory.decodeFile(f.path, android.graphics.BitmapFactory.Options().apply { inSampleSize = 8 }) } } }
     val b = bitmap
-    if (b != null) Image(b.asImageBitmap(), contentDescription = null, contentScale = ContentScale.Crop, modifier = Modifier.size(48.dp).clip(RoundedCornerShape(8.dp)))
-    else Icon(painterResource(R.drawable.ic_restaurant), contentDescription = null, modifier = Modifier.size(48.dp).padding(10.dp))
+    if (b != null) Image(b.asImageBitmap(), contentDescription = null, contentScale = ContentScale.Crop, modifier = Modifier.size(72.dp).clip(RoundedCornerShape(16.dp)))
+    else androidx.compose.foundation.layout.Box(Modifier.size(72.dp).clip(RoundedCornerShape(16.dp)).background(MaterialTheme.colorScheme.secondaryContainer), contentAlignment = Alignment.Center) {
+        Icon(painterResource(R.drawable.ic_restaurant), contentDescription = null, tint = MaterialTheme.colorScheme.onSecondaryContainer)
+    }
 }
 
 @Composable
@@ -376,12 +397,19 @@ private fun RecipeDetail(app: PantryApp, recipe: Recipe, modifier: Modifier, ext
         Column(Modifier.padding(padding).fillMaxSize().verticalScroll(rememberScrollState()).padding(16.dp)) {
             if (extracting) LinearProgressIndicator(Modifier.fillMaxWidth())
             photo?.let { Image(it.asImageBitmap(), contentDescription = "Recipe photo", contentScale = ContentScale.Crop, modifier = Modifier.fillMaxWidth().aspectRatio(4f / 3f).clip(RoundedCornerShape(16.dp))) }
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                StarRow(recipe.rating) { scope.launch { app.repo.setRecipeRating(recipe.id, it) } }
-                Spacer(Modifier.weight(1f))
-                TextButton(onClick = { pickPhoto.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly)) }) { Text(if (photo == null) "Add photo" else "Change") }
-                TextButton(onClick = { takePhoto.launch(null) }) { Text("Camera") }
-                if (photo != null) TextButton(onClick = { scope.launch { app.repo.setRecipePhoto(recipe.id, null) } }) { Text("Remove") }
+            Tile(Modifier.fillMaxWidth().padding(vertical = 8.dp)) {
+                Column(Modifier.padding(horizontal = 12.dp, vertical = 6.dp)) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        StarRow(recipe.rating) { scope.launch { app.repo.setRecipeRating(recipe.id, it) } }
+                        Spacer(Modifier.weight(1f))
+                        Text(if (recipe.rating == 0) "Not rated" else "${recipe.rating}/5", style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    }
+                    Row {
+                        TextButton(onClick = { pickPhoto.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly)) }) { Text(if (photo == null) "Add photo" else "Change photo") }
+                        TextButton(onClick = { takePhoto.launch(null) }) { Text("Camera") }
+                        if (photo != null) TextButton(onClick = { scope.launch { app.repo.setRecipePhoto(recipe.id, null) } }) { Text("Remove") }
+                    }
+                }
             }
             Markdown(recipe.body)
             Spacer(Modifier.height(32.dp))

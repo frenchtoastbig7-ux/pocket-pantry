@@ -45,6 +45,11 @@ import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
+import androidx.compose.material3.TopAppBarDefaults
+import androidx.compose.ui.input.nestedscroll.nestedScroll
+import com.sovereignedge.pocketpantry.ui.common.BigTitleBar
+import com.sovereignedge.pocketpantry.ui.common.Monogram
+import com.sovereignedge.pocketpantry.ui.common.Tile
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -190,18 +195,15 @@ fun CartScreen(app: PantryApp, modifier: Modifier = Modifier, onOpenSettings: ()
             SnackbarHost(snackbar, Modifier.align(Alignment.BottomCenter).padding(bottom = 96.dp))
         }
     } else {
+        val scrollBehavior = TopAppBarDefaults.exitUntilCollapsedScrollBehavior()
         Scaffold(
-            modifier = modifier,
+            modifier = modifier.nestedScroll(scrollBehavior.nestedScrollConnection),
             contentWindowInsets = WindowInsets(0, 0, 0, 0),
             snackbarHost = { SnackbarHost(snackbar) },
             topBar = {
-                TopAppBar(
-                    title = {
-                        Column(Modifier.clickable { pickStore = true }) {
-                            Text(store.name)
-                            Text("Tap to change store", style = MaterialTheme.typography.bodySmall)
-                        }
-                    },
+                BigTitleBar(
+                    title = store.name, subtitle = "Tap the store name to change it", scrollBehavior = scrollBehavior,
+                    navigationIcon = { AppIconButton(R.drawable.ic_store, "Change store") { pickStore = true } },
                     actions = {
                         AppIconButton(R.drawable.ic_history, "Past trips") { showHistory = true }
                         AppIconButton(R.drawable.ic_more, "More") { menu = true }
@@ -226,43 +228,47 @@ fun CartScreen(app: PantryApp, modifier: Modifier = Modifier, onOpenSettings: ()
             },
         ) { padding ->
             Column(Modifier.padding(padding).fillMaxSize()) {
-                Card(Modifier.padding(16.dp).fillMaxWidth()) {
-                    Column(Modifier.padding(16.dp)) {
-                        Text("Cart total", style = MaterialTheme.typography.labelLarge)
-                        Text(money(totals.total, currency), style = MaterialTheme.typography.displaySmall)
+                Tile(Modifier.padding(horizontal = 16.dp, vertical = 6.dp).fillMaxWidth(), tone = MaterialTheme.colorScheme.primaryContainer) {
+                    Column(Modifier.padding(horizontal = 22.dp, vertical = 18.dp)) {
+                        Text("Cart total", style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.onPrimaryContainer)
+                        Text(money(totals.total, currency), style = MaterialTheme.typography.displayMedium, color = MaterialTheme.colorScheme.onPrimaryContainer)
                         Text(
                             buildString {
                                 append("${fmtNumber(totals.count)} item${if (totals.count == 1.0) "" else "s"} · subtotal ${money(totals.subtotal, currency)}")
                                 if (store.taxRate > 0) append(" · tax ${money(totals.tax, currency)} (${fmtNumber(store.taxRate)}%)")
                             },
-                            style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.8f),
                         )
-                        Spacer(Modifier.height(12.dp))
+                        Spacer(Modifier.height(14.dp))
                         Button(onClick = { finishing = true }, enabled = lines.isNotEmpty(), modifier = Modifier.fillMaxWidth()) { Text("Finish trip") }
                     }
                 }
                 if (lines.isEmpty()) {
                     EmptyState(R.drawable.ic_cart, "Cart is empty", "Scan barcodes as you shop and watch the total. Known products at this store are added at their last price in one scan.")
                 } else {
-                    LazyColumn(Modifier.fillMaxSize(), contentPadding = PaddingValues(bottom = 160.dp)) {
+                    LazyColumn(Modifier.fillMaxSize(), contentPadding = PaddingValues(start = 16.dp, end = 16.dp, top = 6.dp, bottom = 160.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                         items(lines, key = { it.id }) { line ->
-                            ListItem(
-                                modifier = Modifier.clickable { editing = line },
-                                headlineContent = { Text(line.name) },
-                                supportingContent = {
-                                    Text("${fmtNumber(line.qty)} × ${money(line.unitPrice, currency)}" + if (line.taxable) " · taxable" else "")
-                                },
-                                trailingContent = {
-                                    Row(verticalAlignment = Alignment.CenterVertically) {
-                                        AppIconButton(R.drawable.ic_remove, "One fewer", onClick = {
-                                            scope.launch { if (line.qty <= 1) app.repo.deleteCartLine(line.id) else app.repo.updateCartLine(line.copy(qty = line.qty - 1)) }
-                                        })
-                                        Text(money(line.lineTotal, currency), style = MaterialTheme.typography.titleMedium)
-                                        AppIconButton(R.drawable.ic_add, "One more", onClick = { scope.launch { app.repo.updateCartLine(line.copy(qty = line.qty + 1)) } })
+                            Surface(
+                                modifier = Modifier.fillMaxWidth().animateItem().clickable { editing = line },
+                                shape = MaterialTheme.shapes.medium, color = MaterialTheme.colorScheme.surfaceContainerLow,
+                            ) {
+                                Row(Modifier.padding(start = 12.dp, end = 8.dp, top = 10.dp, bottom = 10.dp), verticalAlignment = Alignment.CenterVertically) {
+                                    Monogram(line.name)
+                                    Column(Modifier.weight(1f).padding(horizontal = 12.dp)) {
+                                        Text(line.name, style = MaterialTheme.typography.titleMedium, maxLines = 2)
+                                        Text("${fmtNumber(line.qty)} × ${money(line.unitPrice, currency)}" + if (line.taxable) " · taxable" else "", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                                     }
-                                },
-                            )
-                            HorizontalDivider()
+                                    Column(horizontalAlignment = Alignment.End) {
+                                        Text(money(line.lineTotal, currency), style = MaterialTheme.typography.titleMedium)
+                                        Row(verticalAlignment = Alignment.CenterVertically) {
+                                            AppIconButton(R.drawable.ic_remove, "One fewer", onClick = {
+                                                scope.launch { if (line.qty <= 1) app.repo.deleteCartLine(line.id) else app.repo.updateCartLine(line.copy(qty = line.qty - 1)) }
+                                            })
+                                            AppIconButton(R.drawable.ic_add, "One more", onClick = { scope.launch { app.repo.updateCartLine(line.copy(qty = line.qty + 1)) } })
+                                        }
+                                    }
+                                }
+                            }
                         }
                     }
                 }

@@ -10,6 +10,7 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.text.KeyboardActions
@@ -30,6 +31,13 @@ import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
+import androidx.compose.material3.TopAppBarDefaults
+import androidx.compose.material3.Surface
+import androidx.compose.material3.HorizontalDivider
+import androidx.compose.ui.input.nestedscroll.nestedScroll
+import com.sovereignedge.pocketpantry.ui.common.BigTitleBar
+import com.sovereignedge.pocketpantry.ui.common.GroupLabel
+import com.sovereignedge.pocketpantry.ui.common.Tile
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -70,18 +78,16 @@ fun ShoppingListScreen(app: PantryApp, modifier: Modifier = Modifier, onOpenSett
         newName = ""
     }
 
+    val scrollBehavior = TopAppBarDefaults.exitUntilCollapsedScrollBehavior()
     Scaffold(
-        modifier = modifier,
+        modifier = modifier.nestedScroll(scrollBehavior.nestedScrollConnection),
         contentWindowInsets = WindowInsets(0, 0, 0, 0),
         snackbarHost = { SnackbarHost(snackbar) },
         topBar = {
-            TopAppBar(
-                title = {
-                    Column {
-                        Text("Shopping list")
-                        if (list.isNotEmpty()) Text("$remaining of ${list.size} left", style = MaterialTheme.typography.bodySmall)
-                    }
-                },
+            BigTitleBar(
+                title = "Shopping list",
+                subtitle = if (list.isEmpty()) null else "$remaining of ${list.size} left to buy",
+                scrollBehavior = scrollBehavior,
                 actions = {
                     AppIconButton(R.drawable.ic_more, "More") { menu = true }
                     DropdownMenu(expanded = menu, onDismissRequest = { menu = false }) {
@@ -108,32 +114,38 @@ fun ShoppingListScreen(app: PantryApp, modifier: Modifier = Modifier, onOpenSett
         },
     ) { padding ->
         Column(Modifier.padding(padding).fillMaxSize().imePadding()) {
-            Row(Modifier.padding(horizontal = 16.dp, vertical = 8.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            Row(Modifier.padding(horizontal = 16.dp, vertical = 6.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 OutlinedTextField(
-                    value = newName, onValueChange = { newName = it }, placeholder = { Text("Add to list…") }, singleLine = true,
+                    value = newName, onValueChange = { newName = it }, placeholder = { Text("Add to list…") }, singleLine = true, shape = MaterialTheme.shapes.large,
                     keyboardOptions = KeyboardOptions(imeAction = ImeAction.Done), keyboardActions = KeyboardActions(onDone = { add() }),
                     modifier = Modifier.weight(1f),
                 )
-                FilledIconButton(onClick = { add() }, enabled = newName.isNotBlank()) { Icon(painterResource(R.drawable.ic_add), contentDescription = "Add") }
+                FilledIconButton(onClick = { add() }, enabled = newName.isNotBlank(), modifier = Modifier.size(52.dp)) { Icon(painterResource(R.drawable.ic_add), contentDescription = "Add") }
             }
             if (list.isEmpty()) {
                 EmptyState(R.drawable.ic_list, "Nothing to buy", "Type an item above, add low-stock pantry items from the menu, or let a recipe fill the list for you.")
             } else {
-                LazyColumn(Modifier.fillMaxSize(), contentPadding = PaddingValues(bottom = 24.dp)) {
-                    items(list, key = { it.id }) { entry ->
-                        ListItem(
-                            modifier = Modifier.clickable { editing = entry },
-                            leadingContent = {
-                                Checkbox(checked = entry.checked, onCheckedChange = { scope.launch { app.repo.setChecked(entry.id, it) } })
-                            },
-                            headlineContent = {
-                                Text(entry.name, textDecoration = if (entry.checked) TextDecoration.LineThrough else null,
-                                    color = if (entry.checked) MaterialTheme.colorScheme.onSurfaceVariant else MaterialTheme.colorScheme.onSurface)
-                            },
-                            supportingContent = if (entry.quantityText.isBlank()) null else {
-                                { Text(entry.quantityText) }
-                            },
-                        )
+                val open = list.filter { !it.checked }
+                val done = list.filter { it.checked }
+                LazyColumn(Modifier.fillMaxSize(), contentPadding = PaddingValues(start = 16.dp, end = 16.dp, bottom = 24.dp)) {
+                    if (open.isNotEmpty()) item(key = "open") {
+                        Tile(Modifier.fillMaxWidth().animateItem()) {
+                            open.forEachIndexed { index, entry ->
+                                ShoppingRow(entry, onToggle = { scope.launch { app.repo.setChecked(entry.id, it) } }, onClick = { editing = entry })
+                                if (index < open.lastIndex) HorizontalDivider(Modifier.padding(start = 56.dp), color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f))
+                            }
+                        }
+                    }
+                    if (done.isNotEmpty()) {
+                        item(key = "done-label") { GroupLabel("In the cart", Modifier.animateItem()) }
+                        item(key = "done") {
+                            Tile(Modifier.fillMaxWidth().animateItem(), tone = MaterialTheme.colorScheme.surfaceContainerLowest) {
+                                done.forEachIndexed { index, entry ->
+                                    ShoppingRow(entry, onToggle = { scope.launch { app.repo.setChecked(entry.id, it) } }, onClick = { editing = entry })
+                                    if (index < done.lastIndex) HorizontalDivider(Modifier.padding(start = 56.dp), color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f))
+                                }
+                            }
+                        }
                     }
                 }
             }
@@ -165,5 +177,20 @@ fun ShoppingListScreen(app: PantryApp, modifier: Modifier = Modifier, onOpenSett
                 }
             },
         )
+    }
+}
+
+@Composable
+private fun ShoppingRow(entry: ShoppingItem, onToggle: (Boolean) -> Unit, onClick: () -> Unit) {
+    Row(Modifier.fillMaxWidth().clickable(onClick = onClick).padding(start = 8.dp, end = 16.dp, top = 2.dp, bottom = 2.dp), verticalAlignment = Alignment.CenterVertically) {
+        Checkbox(checked = entry.checked, onCheckedChange = onToggle)
+        Column(Modifier.weight(1f).padding(start = 4.dp)) {
+            Text(
+                entry.name, style = MaterialTheme.typography.bodyLarge,
+                textDecoration = if (entry.checked) TextDecoration.LineThrough else null,
+                color = if (entry.checked) MaterialTheme.colorScheme.onSurfaceVariant else MaterialTheme.colorScheme.onSurface,
+            )
+            if (entry.quantityText.isNotBlank()) Text(entry.quantityText, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        }
     }
 }
