@@ -47,7 +47,7 @@ class PantryApp : Application(), CameraXConfig.Provider {
 
     fun onActivityStopped() {
         foregrounded = false
-        if (household.current.backgroundSync && household.isJoined) SyncService.start(this) else sync.stop()
+        if (household.current.backgroundSync && household.isJoined) SyncService.start(this) else sync.pause()
     }
 
     /** Only the back camera is used for barcodes, so CameraX needn't probe (or require) a front camera. */

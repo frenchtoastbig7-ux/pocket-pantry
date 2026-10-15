@@ -73,13 +73,23 @@ class SyncManager(private val context: Context, val repo: Repo, val household: H
         scope.launch { repo.changeTicks().collect { if (it != "peers" && it != "chat") scheduleSoon() } }
     }
 
+    /** Full stop: used when leaving the household. */
     fun stop() {
+        pause()
+        server.stop()
+        _status.value = _status.value.copy(listening = false)
+    }
+
+    /**
+     * The app went to the background without the background-sync option: stop discovering and the timers, but keep
+     * accepting connections while the process lives, so a phone that is still in the app can push to this one.
+     */
+    fun pause() {
         loop?.cancel(); loop = null
         debounce?.cancel(); debounce = null
         discovery?.stop(); discovery = null
-        server.stop()
         discovered.clear()
-        _status.value = _status.value.copy(listening = false, discovered = 0)
+        _status.value = _status.value.copy(discovered = 0)
     }
 
     fun restart() {

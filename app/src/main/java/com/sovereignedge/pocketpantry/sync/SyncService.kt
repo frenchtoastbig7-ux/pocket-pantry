@@ -46,7 +46,7 @@ class SyncService : Service() {
 
     override fun onDestroy() {
         val app = application as PantryApp
-        if (!app.foregrounded) app.sync.stop()
+        if (!app.foregrounded) app.sync.pause()
         super.onDestroy()
     }
 
