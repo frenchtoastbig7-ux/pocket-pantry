@@ -23,7 +23,8 @@ food in a household and what it costs to replace it.
 Everything is stored on the phone in SQLite. The API key is encrypted with an AES key held in the Android hardware
 Keystore (StrongBox / Titan M2 where available) and backups are disabled. There is no account, server or telemetry.
 Barcodes are read on-device with ML Kit's bundled model (no Play services needed); unknown barcodes are looked up on
-Open Food Facts and the answer is cached, and anything it doesn't know you name once.
+Open Food Facts, then UPCitemdb (US retail and store brands), and the answer is cached and shared with the household.
+Anything neither knows you name once.
 
 ## Installing
 
