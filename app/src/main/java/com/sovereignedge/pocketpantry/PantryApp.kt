@@ -42,6 +42,7 @@ class PantryApp : Application(), CameraXConfig.Provider {
         if (settings.current.connectorEnabled) com.sovereignedge.pocketpantry.bridge.ConnectorService.start(this)
         kotlinx.coroutines.CoroutineScope(kotlinx.coroutines.Dispatchers.IO).launch {
             repo.migrateUnitsToSizes()
+            repo.backfillSizes()
             repo.mergeDuplicates()
         }
     }

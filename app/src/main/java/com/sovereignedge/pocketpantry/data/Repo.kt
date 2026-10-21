@@ -309,6 +309,30 @@ class Repo(context: Context, val deviceId: String, dbName: String = "pantry.db")
         return merged
     }
 
+    /**
+     * Fills blank pack sizes from the product cache (if the item was scanned) or from a size written in the item's
+     * name ("Tuna 5 oz"). Emitted as ops so every phone converges; safe to run on every start.
+     */
+    suspend fun backfillSizes(): Int {
+        var filled = 0
+        commit {
+            d.rawQuery(
+                "SELECT i.uuid, i.name, p.quantity_text, p.name FROM items i LEFT JOIN products p ON p.barcode = i.barcode WHERE i.size = ''",
+                null,
+            ).mapAll { listOf(it.getString(0), it.getString(1), it.getStringOrNull(2), it.getStringOrNull(3)) }
+                .forEach { (uuid, name, cachedSize, productName) ->
+                    val size = cachedSize?.let { com.sovereignedge.pocketpantry.barcode.SizeParser.parse(it) ?: it }
+                        ?: com.sovereignedge.pocketpantry.barcode.SizeParser.parse(name)
+                        ?: com.sovereignedge.pocketpantry.barcode.SizeParser.parse(productName)
+                    if (size != null) {
+                        set("items", uuid as String, mapOf("size" to size))
+                        filled++
+                    }
+                }
+        }
+        return filled
+    }
+
     /** Debug builds only: fills the household with a realistic sample so screens can be reviewed. */
     suspend fun seedDemo(): Long {
         val locs = locations().first().associateBy { it.name }

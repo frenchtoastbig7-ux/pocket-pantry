@@ -24,7 +24,13 @@ class ProductLookup(private val repo: Repo) {
         .build()
 
     suspend fun lookup(barcode: String): Product? {
-        repo.product(barcode)?.let { return it }
+        repo.product(barcode)?.let { cached ->
+            // Products cached before sizes were parsed from titles: fill the size in once and share it.
+            if (cached.quantityText == null) SizeParser.parse(cached.name)?.let { size ->
+                return cached.copy(quantityText = size).also { repo.rememberProduct(it) }
+            }
+            return cached
+        }
         val remote = fetchOpenFoodFacts(barcode) ?: fetchUpcItemDb(barcode) ?: return null
         repo.rememberProduct(remote)
         return remote
@@ -50,7 +56,7 @@ class ProductLookup(private val repo: Repo) {
             barcode = barcode,
             name = name,
             brand = product.optString("brands").trim().ifBlank { null }?.substringBefore(","),
-            quantityText = product.optString("quantity").trim().ifBlank { null },
+            quantityText = product.optString("quantity").trim().ifBlank { null }?.let { SizeParser.parse(it) ?: it } ?: SizeParser.parse(name),
             source = "openfoodfacts",
         )
     }
@@ -66,7 +72,9 @@ class ProductLookup(private val repo: Repo) {
             barcode = barcode,
             name = title,
             brand = item.optString("brand").trim().ifBlank { null },
-            quantityText = null, // UPCitemdb's size field is often garbage ("9-11" for a case of water)
+            // UPCitemdb's size field is often junk ("9-11" for a case of water); trust it only when it reads as a size,
+            // otherwise take the size from the title, which usually ends in one.
+            quantityText = item.optString("size").trim().takeIf { SizeParser.looksLikeSize(it) }?.let { SizeParser.parse(it) } ?: SizeParser.parse(title),
             source = "upcitemdb",
         )
     }
