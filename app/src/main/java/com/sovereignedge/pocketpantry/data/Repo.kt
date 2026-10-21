@@ -524,11 +524,18 @@ class Repo(context: Context, val deviceId: String, dbName: String = "pantry.db")
 
     data class Move(val item: Item, val from: Location, val to: Location)
 
-    /** Items the guesser would move somewhere else; nothing is changed. */
+    /**
+     * Items the guesser would move somewhere else; nothing is changed. Only items in a pantry-style location (or one
+     * the guesser doesn't recognise) are candidates: frozen fish lives in the Freezer and fresh herbs in the Fridge
+     * because someone put them there, and a name alone can't tell "frozen cod" from "cod".
+     */
     suspend fun autoSortPlan(): List<Move> {
         val locations = locations().first()
         val byId = locations.associateBy { it.id }
+        val keep = setOf(com.sovereignedge.pocketpantry.barcode.LocationGuesser.Kind.FRIDGE, com.sovereignedge.pocketpantry.barcode.LocationGuesser.Kind.FREEZER)
+            .mapNotNull { com.sovereignedge.pocketpantry.barcode.LocationGuesser.matchLocation(it, locations.map { l -> l.name }) }.toSet()
         return itemsNow().mapNotNull { item ->
+            if (byId[item.locationId]?.name in keep) return@mapNotNull null
             val category = item.barcode?.let { product(it)?.category }
             val kind = com.sovereignedge.pocketpantry.barcode.LocationGuesser.guess(item.name, item.brand, category) ?: return@mapNotNull null
             val targetName = com.sovereignedge.pocketpantry.barcode.LocationGuesser.matchLocation(kind, locations.map { it.name }) ?: return@mapNotNull null

@@ -17,7 +17,11 @@ object LocationGuesser {
         "nuts", "peanuts", "almonds", "peanut butter", "honey", "syrup", "tea", "coffee", "chocolate", "candy", "bar", "bars", "beans", "lentils", "chickpeas",
         "tuna", "sardines", "anchovies", "tomato sauce", "tomato paste", "diced tomatoes", "crushed tomatoes", "salsa", "ketchup", "mustard", "mayonnaise",
         "baking", "yeast", "vanilla", "extract", "cocoa", "gravy", "shelf stable", "shelf-stable", "water", "soda", "cola", "juice box", "baby food", "formula",
-        "pantry", "canned goods", "grains", "snacks", "condiments", "breakfast cereals", "legumes", "spreads", "sweeteners", "beverages", "packets", "packet",
+        "pantry", "canned goods", "grains", "snacks", "snack", "condiments", "breakfast cereals", "legumes", "spreads", "sweeteners", "beverages", "packets", "packet",
+        "cream of", "condensed", "evaporated", "relish", "flakes", "curry", "sazon", "adobo", "achiote", "bouillon cubes", "pop", "popcorn", "flavor", "flavored",
+        "flavour", "chunks", "minced", "jerky", "marinade", "dressing", "glaze", "croutons", "stuffing", "pudding", "gelatin", "jello", "crisps", "trail mix", "wafers",
+        "biscotti", "tortilla chips", "taco", "tacos", "shells", "enchilada", "refried", "hominy", "masa", "cornmeal", "grits", "hot sauce", "soy sauce", "fish sauce",
+        "oyster sauce", "ramen", "udon", "yakisoba", "pho", "cup", "bowl", "microwave", "microwavable", "pouch", "pouches", "tetra", "concentrate", "bulk",
     )
     private val fridge = words(
         "milk", "yogurt", "yoghurt", "cheese", "cheddar", "mozzarella", "parmesan", "feta", "brie", "butter", "margarine", "cream", "creamer", "sour cream",
@@ -27,8 +31,11 @@ object LocationGuesser {
         "broccoli", "cauliflower", "cucumber", "cucumbers", "zucchini", "asparagus", "cilantro", "parsley", "basil", "dill", "chives", "scallions", "green onions",
         "leeks", "cabbage", "brussels", "radishes", "beets", "dough", "pie crust", "pizza dough", "crescent", "orange juice", "almond milk", "oat milk", "soy milk",
         "dairy", "dairies", "cheeses", "yogurts", "fresh", "refrigerated", "meats", "meat", "poultry", "seafood", "fresh vegetables", "fresh fruits", "fresh fruit",
-        "fresh vegetable", "produce", "fermented", "kimchi", "sauerkraut", "pickles", "guacamole", "pesto", "jam", "jelly",
+        "fresh vegetable", "produce", "fermented", "kimchi", "sauerkraut", "pickles", "guacamole", "pesto", "jam", "jelly", "fillet", "fillets", "steaks", "cutlets",
+        "thighs", "breasts", "wings", "drumsticks", "ribs", "roast", "chops", "mince", "tenderloin", "brisket",
     )
+    // A cut of meat or fish is fresh (or frozen, which the caller already respects) even when the species word is a pantry staple ("tuna").
+    private val freshCut = words("fillet", "fillets", "steak", "steaks", "thighs", "breasts", "wings", "drumsticks", "chops", "cutlets", "roast", "ribs", "tenderloin", "brisket", "ground beef", "ground turkey", "fresh")
     private val counter = words(
         "banana", "bananas", "avocado", "avocados", "tomato", "tomatoes", "onion", "onions", "garlic", "potato", "potatoes", "sweet potato", "sweet potatoes",
         "shallot", "shallots", "bread", "loaf", "bagel", "bagels", "baguette", "rolls", "buns", "tortillas", "apple", "apples", "orange", "oranges", "lemon",
@@ -44,11 +51,13 @@ object LocationGuesser {
         val padded = " $text "
         fun hits(set: Set<String>) = set.count { padded.contains(" $it ") }
         if (hits(freezer) > 0) return Kind.FREEZER
+        if (hits(freshCut) > 0) return Kind.FRIDGE
         val p = hits(pantry)
         val f = hits(fridge)
         val c = hits(counter)
+        // A shelf-stable word is decisive: "evaporated milk" and "chicken broth" are pantry no matter how many fresh words follow.
         return when {
-            p > 0 && p >= f && p >= c -> Kind.PANTRY
+            p > 0 -> Kind.PANTRY
             f > 0 && f >= c -> Kind.FRIDGE
             c > 0 -> Kind.COUNTER
             else -> null

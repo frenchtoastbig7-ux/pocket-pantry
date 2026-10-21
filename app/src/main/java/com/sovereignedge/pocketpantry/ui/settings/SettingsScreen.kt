@@ -281,21 +281,33 @@ fun SettingsScreen(app: PantryApp, onBack: () -> Unit, onOpenHousehold: () -> Un
             onConfirm = { app.settings.clearApiKey(); app.claude.forget(); testResult = null }, onDismiss = { confirmForget = false })
     }
     sortPlan?.let { plan ->
+        val chosen = remember(plan) { mutableStateOf(plan.map { it.item.id }.toSet()) }
+        val count = chosen.value.size
         androidx.compose.material3.AlertDialog(
             onDismissRequest = { sortPlan = null },
-            title = { Text(if (plan.isEmpty()) "Nothing to move" else "Move ${plan.size} item${if (plan.size == 1) "" else "s"}?") },
+            title = { Text(if (plan.isEmpty()) "Nothing to move" else "Move $count of ${plan.size} item${if (plan.size == 1) "" else "s"}?") },
             text = {
-                Column(Modifier.verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                Column(Modifier.verticalScroll(rememberScrollState())) {
                     if (plan.isEmpty()) Text("Everything already sits where the app would put it, or its name doesn't say where it belongs.")
+                    else Text("Untick anything that should stay put.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                     plan.groupBy { it.to.name }.toSortedMap().forEach { (to, moves) ->
-                        Text("To $to", style = MaterialTheme.typography.titleSmall, color = MaterialTheme.colorScheme.primary)
-                        moves.forEach { Text("${it.item.name}  (from ${it.from.name})", style = MaterialTheme.typography.bodyMedium) }
+                        Text("To $to", style = MaterialTheme.typography.titleSmall, color = MaterialTheme.colorScheme.primary, modifier = Modifier.padding(top = 10.dp, bottom = 2.dp))
+                        moves.forEach { move ->
+                            Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
+                                androidx.compose.material3.Checkbox(
+                                    checked = move.item.id in chosen.value,
+                                    onCheckedChange = { on -> chosen.value = if (on) chosen.value + move.item.id else chosen.value - move.item.id },
+                                )
+                                Column { Text(move.item.name, style = MaterialTheme.typography.bodyMedium); Text("from ${move.from.name}", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant) }
+                            }
+                        }
                     }
                 }
             },
             confirmButton = {
-                TextButton(enabled = plan.isNotEmpty(), onClick = {
-                    scope.launch { app.repo.applyMoves(plan); snackbar.showSnackbar("Moved ${plan.size} item${if (plan.size == 1) "" else "s"}") }
+                TextButton(enabled = count > 0, onClick = {
+                    val moves = plan.filter { it.item.id in chosen.value }
+                    scope.launch { app.repo.applyMoves(moves); snackbar.showSnackbar("Moved ${moves.size} item${if (moves.size == 1) "" else "s"}") }
                     sortPlan = null
                 }) { Text("Move them") }
             },
