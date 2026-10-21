@@ -48,7 +48,7 @@ class ProductLookup(private val repo: Repo) {
     }.onFailure { Log.i(TAG, "lookup failed: $it") }.getOrNull()
 
     private suspend fun fetchOpenFoodFacts(barcode: String): Product? = withContext(Dispatchers.IO) {
-        val json = get("https://world.openfoodfacts.org/api/v2/product/$barcode.json?fields=product_name,brands,quantity") ?: return@withContext null
+        val json = get("https://world.openfoodfacts.org/api/v2/product/$barcode.json?fields=product_name,brands,quantity,categories_tags") ?: return@withContext null
         if (json.optInt("status", 0) != 1) return@withContext null
         val product = json.optJSONObject("product") ?: return@withContext null
         val name = product.optString("product_name").trim().ifBlank { return@withContext null }
@@ -58,6 +58,7 @@ class ProductLookup(private val repo: Repo) {
             brand = product.optString("brands").trim().ifBlank { null }?.substringBefore(","),
             quantityText = product.optString("quantity").trim().ifBlank { null }?.let { SizeParser.parse(it) ?: it } ?: SizeParser.parse(name),
             source = "openfoodfacts",
+            category = product.optJSONArray("categories_tags")?.let { tags -> (0 until tags.length()).map { tags.getString(it).removePrefix("en:").replace('-', ' ') }.joinToString(", ") }?.ifBlank { null },
         )
     }
 
@@ -76,6 +77,7 @@ class ProductLookup(private val repo: Repo) {
             // otherwise take the size from the title, which usually ends in one.
             quantityText = item.optString("size").trim().takeIf { SizeParser.looksLikeSize(it) }?.let { SizeParser.parse(it) } ?: SizeParser.parse(title),
             source = "upcitemdb",
+            category = item.optString("category").trim().ifBlank { null },
         )
     }
 

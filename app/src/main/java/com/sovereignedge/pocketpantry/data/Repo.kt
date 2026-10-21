@@ -236,8 +236,8 @@ class Repo(context: Context, val deviceId: String, dbName: String = "pantry.db")
             val item = c.toItem(offset = 1)
             itemFields(item, c.getString(ITEM_COL_COUNT + 1))
         }
-        seed(SyncTable.byName.getValue("products"), "barcode, name, brand, quantity_text, source, updated_at") {
-            mapOf("barcode" to it.getString(1), "name" to it.getString(2), "brand" to it.getStringOrNull(3), "quantity_text" to it.getStringOrNull(4), "source" to it.getString(5), "updated_at" to it.getLong(6))
+        seed(SyncTable.byName.getValue("products"), "barcode, name, brand, quantity_text, source, updated_at, category") {
+            mapOf("barcode" to it.getString(1), "name" to it.getString(2), "brand" to it.getStringOrNull(3), "quantity_text" to it.getStringOrNull(4), "source" to it.getString(5), "updated_at" to it.getLong(6), "category" to it.getStringOrNull(7))
         }
         seed(SyncTable.byName.getValue("prices"), "(SELECT uuid FROM stores WHERE id = store_id), barcode, price, seen_at") {
             mapOf("store" to it.getString(1), "barcode" to it.getString(2), "price" to it.getDouble(3), "seen_at" to it.getLong(4))
@@ -487,34 +487,73 @@ class Repo(context: Context, val deviceId: String, dbName: String = "pantry.db")
      * Adds finished cart lines to the inventory. A line whose barcode (or, failing that, name) already exists in the
      * chosen location tops up that item; anything else becomes a new item.
      */
-    suspend fun stockFromCart(lines: List<CartLine>, locationId: Long) = commit {
-        val now = System.currentTimeMillis()
-        val locationUuid = uuidOf(d, "locations", locationId)
-        for (line in lines) {
-            val existing = line.barcode?.let { bc ->
-                d.rawQuery("SELECT uuid FROM items WHERE barcode=? AND location_id=? LIMIT 1", arrayOf(bc, "$locationId")).firstOrNull { it.getString(0) }
-            } ?: d.rawQuery("SELECT uuid FROM items WHERE LOWER(name)=LOWER(?) AND location_id=? LIMIT 1", arrayOf(line.name, "$locationId")).firstOrNull { it.getString(0) }
-            if (existing != null) {
-                delta("items", existing, "quantity", line.qty)
-            } else {
-                val item = Item(0, line.name, line.barcode, null, line.qty, "", "", locationId, null, "", null, now, now)
-                set("items", Hlc.newId(), itemFields(item, locationUuid))
+    suspend fun stockFromCart(lines: List<CartLine>, locationId: Long, autoSort: Boolean = true) {
+        val targets = lines.associateWith { line -> (if (autoSort) suggestLocation(line.name, null, line.barcode) else null) ?: locationId }
+        commit {
+            val now = System.currentTimeMillis()
+            for (line in lines) {
+                val target = targets.getValue(line)
+                // Top up the same product wherever it already lives; otherwise create it in the chosen (or guessed) location.
+                val existing = line.barcode?.let { bc ->
+                    d.rawQuery("SELECT uuid FROM items WHERE barcode=? ORDER BY CASE WHEN location_id=? THEN 0 ELSE 1 END LIMIT 1", arrayOf(bc, "$target")).firstOrNull { it.getString(0) }
+                } ?: d.rawQuery("SELECT uuid FROM items WHERE LOWER(name)=LOWER(?) ORDER BY CASE WHEN location_id=? THEN 0 ELSE 1 END LIMIT 1", arrayOf(line.name, "$target")).firstOrNull { it.getString(0) }
+                if (existing != null) {
+                    delta("items", existing, "quantity", line.qty)
+                } else {
+                    val item = Item(0, line.name, line.barcode, null, line.qty, "", "", target, null, "", null, now, now)
+                    set("items", Hlc.newId(), itemFields(item, uuidOf(d, "locations", target)))
+                }
             }
         }
+    }
+
+    /**
+     * Where a product most likely belongs: wherever the household already keeps the same barcode, else the location
+     * whose name matches the guesser's verdict for the name, brand and category. Null when there's no good answer.
+     */
+    suspend fun suggestLocation(name: String?, brand: String? = null, barcode: String? = null, category: String? = null): Long? = read { d ->
+        barcode?.let { bc ->
+            d.rawQuery("SELECT location_id FROM items WHERE barcode=? ORDER BY updated_at DESC LIMIT 1", arrayOf(bc)).firstOrNull { it.getLong(0) }?.let { return@read it }
+        }
+        val cat = category ?: barcode?.let { bc -> d.rawQuery("SELECT category FROM products WHERE barcode=?", arrayOf(bc)).firstOrNull { it.getStringOrNull(0) } }
+        val kind = com.sovereignedge.pocketpantry.barcode.LocationGuesser.guess(name, brand, cat) ?: return@read null
+        val locations = d.locationsNow()
+        val match = com.sovereignedge.pocketpantry.barcode.LocationGuesser.matchLocation(kind, locations.map { it.name }) ?: return@read null
+        locations.first { it.name == match }.id
+    }
+
+    data class Move(val item: Item, val from: Location, val to: Location)
+
+    /** Items the guesser would move somewhere else; nothing is changed. */
+    suspend fun autoSortPlan(): List<Move> {
+        val locations = locations().first()
+        val byId = locations.associateBy { it.id }
+        return itemsNow().mapNotNull { item ->
+            val category = item.barcode?.let { product(it)?.category }
+            val kind = com.sovereignedge.pocketpantry.barcode.LocationGuesser.guess(item.name, item.brand, category) ?: return@mapNotNull null
+            val targetName = com.sovereignedge.pocketpantry.barcode.LocationGuesser.matchLocation(kind, locations.map { it.name }) ?: return@mapNotNull null
+            val to = locations.first { it.name == targetName }
+            val from = byId[item.locationId] ?: return@mapNotNull null
+            if (to.id == from.id) null else Move(item, from, to)
+        }
+    }
+
+    suspend fun applyMoves(moves: List<Move>) = commit {
+        for (move in moves) set("items", uuidOf(d, "items", move.item.id), mapOf("location" to uuidOf(d, "locations", move.to.id)))
     }
 
     // ---------- Product cache ----------
 
     suspend fun product(barcode: String): Product? = read { d ->
-        d.rawQuery("SELECT barcode, name, brand, quantity_text, source FROM products WHERE barcode=?", arrayOf(barcode)).firstOrNull {
-            Product(it.getString(0), it.getString(1), it.getStringOrNull(2), it.getStringOrNull(3), it.getString(4))
+        d.rawQuery("SELECT barcode, name, brand, quantity_text, source, category FROM products WHERE barcode=?", arrayOf(barcode)).firstOrNull {
+            Product(it.getString(0), it.getString(1), it.getStringOrNull(2), it.getStringOrNull(3), it.getString(4), it.getStringOrNull(5))
         }
     }
 
     suspend fun rememberProduct(product: Product) = commit {
         set(
             "products", "product:${product.barcode}",
-            mapOf("barcode" to product.barcode, "name" to product.name.trim(), "brand" to product.brand, "quantity_text" to product.quantityText, "source" to product.source, "updated_at" to System.currentTimeMillis()),
+            mapOf("barcode" to product.barcode, "name" to product.name.trim(), "brand" to product.brand, "quantity_text" to product.quantityText, "source" to product.source, "updated_at" to System.currentTimeMillis(), "category" to product.category),
         )
     }
 
@@ -551,9 +590,9 @@ class Repo(context: Context, val deviceId: String, dbName: String = "pantry.db")
     /** Cached products whose name or brand contains [query]. */
     suspend fun searchProducts(query: String, limit: Int = 20): List<Product> = read { d ->
         d.rawQuery(
-            "SELECT barcode, name, brand, quantity_text, source FROM products WHERE name LIKE ? OR brand LIKE ? ORDER BY name LIMIT ?",
+            "SELECT barcode, name, brand, quantity_text, source, category FROM products WHERE name LIKE ? OR brand LIKE ? ORDER BY name LIMIT ?",
             arrayOf("%$query%", "%$query%", "$limit"),
-        ).mapAll { Product(it.getString(0), it.getString(1), it.getStringOrNull(2), it.getStringOrNull(3), it.getString(4)) }
+        ).mapAll { Product(it.getString(0), it.getString(1), it.getStringOrNull(2), it.getStringOrNull(3), it.getString(4), it.getStringOrNull(5)) }
     }
 
     suspend fun lastPrice(storeId: Long, barcode: String): Double? = read { d ->

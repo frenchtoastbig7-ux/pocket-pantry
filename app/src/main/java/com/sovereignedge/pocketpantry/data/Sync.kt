@@ -102,7 +102,7 @@ class SyncTable(
                 bus = "items",
             ),
             SyncTable(
-                "products", mapOf("barcode" to "barcode", "name" to "name", "brand" to "brand", "quantity_text" to "quantity_text", "source" to "source", "updated_at" to "updated_at"),
+                "products", mapOf("barcode" to "barcode", "name" to "name", "brand" to "brand", "quantity_text" to "quantity_text", "source" to "source", "updated_at" to "updated_at", "category" to "category"),
                 defaults = mapOf("barcode" to "", "name" to "Unnamed", "source" to "sync", "updated_at" to 0L), bus = "products",
             ),
             SyncTable("stores", mapOf("name" to "name", "tax_rate" to "tax_rate"), defaults = mapOf("name" to "Unnamed", "tax_rate" to 0.0), bus = "stores"),

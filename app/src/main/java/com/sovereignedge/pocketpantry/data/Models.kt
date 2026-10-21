@@ -28,7 +28,7 @@ data class Item(
 }
 
 /** What a barcode resolved to, cached locally so the second scan is instant and offline. */
-data class Product(val barcode: String, val name: String, val brand: String?, val quantityText: String?, val source: String)
+data class Product(val barcode: String, val name: String, val brand: String?, val quantityText: String?, val source: String, val category: String? = null)
 
 /** A grocery store the user shops at. [taxRate] is a percentage applied to taxable lines. */
 data class Store(val id: Long, val name: String, val taxRate: Double)

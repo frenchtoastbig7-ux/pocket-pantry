@@ -153,6 +153,40 @@ class SyncDeviceTest {
     }
 
     @Test
+    fun stockingSortsLinesAndRemembersWhereBarcodesLive() = runBlocking {
+        val locs = a.locations().first().associateBy { it.name }
+        // A trip with a frozen item, a dairy item, bread, and a mystery item; the chosen fallback is Pantry.
+        val lines = listOf(
+            com.sovereignedge.pocketpantry.data.CartLine(0, 1, "1", "Birds Eye Frozen Peas", 2.0, 1.0, false),
+            com.sovereignedge.pocketpantry.data.CartLine(0, 1, "2", "Fage Greek Yogurt", 3.0, 2.0, false),
+            com.sovereignedge.pocketpantry.data.CartLine(0, 1, null, "Sourdough loaf", 4.0, 1.0, false),
+            com.sovereignedge.pocketpantry.data.CartLine(0, 1, "4", "Zorblax", 5.0, 1.0, false),
+        )
+        a.stockFromCart(lines, locs.getValue("Pantry").id)
+        val byName = a.itemsNow().associateBy { it.name }
+        assertEquals(locs.getValue("Freezer").id, byName.getValue("Birds Eye Frozen Peas").locationId)
+        assertEquals(locs.getValue("Fridge").id, byName.getValue("Fage Greek Yogurt").locationId)
+        assertEquals(locs.getValue("Counter").id, byName.getValue("Sourdough loaf").locationId)
+        assertEquals(locs.getValue("Pantry").id, byName.getValue("Zorblax").locationId)
+        // The household moved the mystery item to the Counter; the same barcode now suggests the Counter.
+        a.upsertItem(byName.getValue("Zorblax").copy(locationId = locs.getValue("Counter").id))
+        assertEquals(locs.getValue("Counter").id, a.suggestLocation("Zorblax", null, "4"))
+        // Re-buying tops up the existing item wherever it is instead of creating a second one.
+        a.stockFromCart(listOf(lines[3].copy(qty = 2.0)), locs.getValue("Pantry").id)
+        val zorblax = a.itemsNow().filter { it.name == "Zorblax" }
+        assertEquals(1, zorblax.size)
+        assertEquals(3.0, zorblax.single().quantity, 1e-9)
+        assertEquals(locs.getValue("Counter").id, zorblax.single().locationId)
+        // The sort plan proposes moving a misplaced item and nothing else.
+        a.upsertItem(byName.getValue("Fage Greek Yogurt").copy(locationId = locs.getValue("Pantry").id))
+        val plan = a.autoSortPlan()
+        assertEquals(listOf("Fage Greek Yogurt"), plan.map { it.item.name })
+        assertEquals("Fridge", plan.single().to.name)
+        a.applyMoves(plan)
+        assertEquals(locs.getValue("Fridge").id, a.itemsNow().first { it.name == "Fage Greek Yogurt" }.locationId)
+    }
+
+    @Test
     fun beaconDiscoveryHearsAHouseholdPhone() = runBlocking {
         val found = java.util.concurrent.CompletableFuture<Triple<String, Int, String>>()
         val scope = kotlinx.coroutines.CoroutineScope(Dispatchers.IO)

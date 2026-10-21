@@ -81,6 +81,8 @@ fun SettingsScreen(app: PantryApp, onBack: () -> Unit, onOpenHousehold: () -> Un
     var renameLocation by remember { mutableStateOf<Location?>(null) }
     var deleteLocation by remember { mutableStateOf<Location?>(null) }
     var confirmWipe by remember { mutableStateOf(false) }
+    var sortPlan by remember { mutableStateOf<List<com.sovereignedge.pocketpantry.data.Repo.Move>?>(null) }
+    var planning by remember { mutableStateOf(false) }
     var confirmForget by remember { mutableStateOf(false) }
 
     Scaffold(
@@ -233,7 +235,11 @@ fun SettingsScreen(app: PantryApp, onBack: () -> Unit, onOpenHousehold: () -> Un
                     },
                 )
             }
-            TextButton(onClick = { addLocation = true }, modifier = Modifier.padding(horizontal = 8.dp)) { Text("Add location") }
+            Row(Modifier.padding(horizontal = 8.dp)) {
+                TextButton(onClick = { addLocation = true }) { Text("Add location") }
+                TextButton(enabled = !planning, onClick = { planning = true; scope.launch { sortPlan = app.repo.autoSortPlan(); planning = false } }) { Text(if (planning) "Checking…" else "Sort items into locations") }
+            }
+            Text("Sorting looks at each item's name and category and proposes moves (milk to the Fridge, frozen peas to the Freezer). You see the list before anything moves.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.padding(start = 16.dp, end = 16.dp, bottom = 14.dp))
             }
 
             GroupLabel("Data")
@@ -273,6 +279,28 @@ fun SettingsScreen(app: PantryApp, onBack: () -> Unit, onOpenHousehold: () -> Un
     if (confirmForget) {
         ConfirmDialog("Forget the API key?", "Recipes lock again until a key is added.", confirmLabel = "Forget",
             onConfirm = { app.settings.clearApiKey(); app.claude.forget(); testResult = null }, onDismiss = { confirmForget = false })
+    }
+    sortPlan?.let { plan ->
+        androidx.compose.material3.AlertDialog(
+            onDismissRequest = { sortPlan = null },
+            title = { Text(if (plan.isEmpty()) "Nothing to move" else "Move ${plan.size} item${if (plan.size == 1) "" else "s"}?") },
+            text = {
+                Column(Modifier.verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                    if (plan.isEmpty()) Text("Everything already sits where the app would put it, or its name doesn't say where it belongs.")
+                    plan.groupBy { it.to.name }.toSortedMap().forEach { (to, moves) ->
+                        Text("To $to", style = MaterialTheme.typography.titleSmall, color = MaterialTheme.colorScheme.primary)
+                        moves.forEach { Text("${it.item.name}  (from ${it.from.name})", style = MaterialTheme.typography.bodyMedium) }
+                    }
+                }
+            },
+            confirmButton = {
+                TextButton(enabled = plan.isNotEmpty(), onClick = {
+                    scope.launch { app.repo.applyMoves(plan); snackbar.showSnackbar("Moved ${plan.size} item${if (plan.size == 1) "" else "s"}") }
+                    sortPlan = null
+                }) { Text("Move them") }
+            },
+            dismissButton = { TextButton(onClick = { sortPlan = null }) { Text("Cancel") } },
+        )
     }
     if (confirmWipe) {
         ConfirmDialog("Delete all data?", "Pantry, carts, lists, recipes, stores and the API key are erased.", confirmLabel = "Delete everything",

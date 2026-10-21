@@ -126,8 +126,13 @@ fun InventoryScreen(app: PantryApp, modifier: Modifier = Modifier, onOpenSetting
                     lookingUp = false
                     val current = editing
                     if (current != null && current.id == 0L && current.barcode == code) {
-                        if (product != null) editing = current.copy(name = current.name.ifBlank { product.name }, brand = current.brand ?: product.brand, size = current.size.ifBlank { product.quantityText ?: "" })
-                        else snackbar.showSnackbar("Unknown barcode. Name it once and Pocket Pantry will remember it.")
+                        // Suggest where it goes: the same barcode's usual place, or the guesser's verdict on name and category.
+                        val suggested = app.repo.suggestLocation(product?.name ?: current.name, product?.brand, code, product?.category)
+                        if (product != null) editing = current.copy(name = current.name.ifBlank { product.name }, brand = current.brand ?: product.brand, size = current.size.ifBlank { product.quantityText ?: "" }, locationId = suggested ?: current.locationId)
+                        else {
+                            if (suggested != null) editing = current.copy(locationId = suggested)
+                            snackbar.showSnackbar("Unknown barcode. Name it once and Pocket Pantry will remember it.")
+                        }
                     }
                 }
             }

@@ -378,6 +378,7 @@ private fun FinishTripDialog(app: PantryApp, session: CartSession, lines: List<C
     val locations by app.repo.locations().collectAsStateWithLifecycle(emptyList())
     val settings by app.settings.state.collectAsStateWithLifecycle()
     var addToPantry by rememberSaveable { mutableStateOf(true) }
+    var autoSort by rememberSaveable { mutableStateOf(true) }
     var locationId by rememberSaveable { mutableStateOf(settings.defaultLocationId) }
     val scope = rememberCoroutineScope()
     val chosen = locations.firstOrNull { it.id == locationId } ?: locations.firstOrNull()
@@ -392,7 +393,11 @@ private fun FinishTripDialog(app: PantryApp, session: CartSession, lines: List<C
                     Switch(checked = addToPantry, onCheckedChange = { addToPantry = it })
                 }
                 if (addToPantry) {
-                    Text("Where do they go?", style = MaterialTheme.typography.labelLarge)
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Text("Sort into Fridge, Freezer and Pantry automatically", Modifier.weight(1f), style = MaterialTheme.typography.bodyMedium)
+                        Switch(checked = autoSort, onCheckedChange = { autoSort = it })
+                    }
+                    Text(if (autoSort) "Anything not recognised goes to:" else "Where do they go?", style = MaterialTheme.typography.labelLarge)
                     FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                         locations.forEach { loc ->
                             FilterChip(selected = chosen?.id == loc.id, onClick = { locationId = loc.id }, label = { Text(loc.name) })
@@ -406,7 +411,7 @@ private fun FinishTripDialog(app: PantryApp, session: CartSession, lines: List<C
             TextButton(enabled = !addToPantry || chosen != null, onClick = {
                 scope.launch {
                     if (addToPantry && chosen != null) {
-                        app.repo.stockFromCart(lines, chosen.id)
+                        app.repo.stockFromCart(lines, chosen.id, autoSort)
                         app.settings.setDefaultLocation(chosen.id)
                     }
                     app.repo.finishSession(session)

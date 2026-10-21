@@ -128,7 +128,7 @@ class ConnectorServer(
             description = "Adds an item to the pantry. If an item with the same name already exists in that location, its quantity is increased instead.",
             properties = {
                 str("name", "Item name")
-                str("location", "Storage location name; defaults to the first location")
+                str("location", "Storage location name; when omitted the app sorts it (Fridge/Freezer/Pantry/Counter) from the name")
                 num("quantity", "How many (default 1)")
                 str("unit", "Unit for the quantity, e.g. pcs, g, L (optional)")
                 str("size", "Pack size as printed, e.g. '1.25 oz', '6 pack' (optional)")
@@ -142,6 +142,7 @@ class ConnectorServer(
             val name = args.string("name")
             val locations = repo.locations().first()
             val location = args.optional("location")?.let { wanted -> locations.firstOrNull { it.name.equals(wanted, true) } ?: error("No location named '$wanted'. Known: ${locations.joinToString { it.name }}") }
+                ?: repo.suggestLocation(name, args.optional("brand"))?.let { id -> locations.firstOrNull { it.id == id } }
                 ?: locations.firstOrNull() ?: error("No storage locations exist yet")
             val qty = args.number("quantity") ?: 1.0
             val existing = repo.itemsNow().firstOrNull { it.locationId == location.id && it.name.equals(name, true) }

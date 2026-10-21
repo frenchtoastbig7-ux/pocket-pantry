@@ -50,7 +50,8 @@ class PantryDb(context: Context, name: String = "pantry.db") : SQLiteOpenHelper(
                 brand TEXT,
                 quantity_text TEXT,
                 source TEXT NOT NULL,
-                updated_at INTEGER NOT NULL)"""
+                updated_at INTEGER NOT NULL,
+                category TEXT)"""
         )
         db.execSQL(
             """CREATE TABLE stores(
@@ -145,6 +146,9 @@ class PantryDb(context: Context, name: String = "pantry.db") : SQLiteOpenHelper(
             db.execSQL("ALTER TABLE recipes ADD COLUMN rating INTEGER NOT NULL DEFAULT 0")
             db.execSQL("ALTER TABLE recipes ADD COLUMN photo TEXT")
         }
+        if (oldVersion < 5) {
+            db.execSQL("ALTER TABLE products ADD COLUMN category TEXT")
+        }
     }
 
     private fun createSyncTables(db: SQLiteDatabase) {
@@ -178,7 +182,7 @@ class PantryDb(context: Context, name: String = "pantry.db") : SQLiteOpenHelper(
     }
 
     companion object {
-        const val VERSION = 4
+        const val VERSION = 5
         val DEFAULT_LOCATIONS = listOf("Pantry", "Counter", "Fridge", "Freezer")
         const val DEFAULT_STORE = "My grocery store"
     }

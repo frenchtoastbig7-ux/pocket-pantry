@@ -58,17 +58,26 @@ fun ItemEditorSheet(
     var unit by rememberSaveable { mutableStateOf(item.unit) }
     var size by rememberSaveable { mutableStateOf(item.size) }
     var locationId by rememberSaveable { mutableStateOf(item.locationId) }
+    var locationTouched by rememberSaveable { mutableStateOf(item.id != 0L) }
     var expiresOn by rememberSaveable { mutableStateOf(item.expiresOn) }
     var lowThreshold by rememberSaveable { mutableStateOf(item.lowThreshold?.let(::fmtNumber) ?: "") }
     var notes by rememberSaveable { mutableStateOf(item.notes) }
     var pickDate by remember { mutableStateOf(false) }
     var confirmDelete by remember { mutableStateOf(false) }
     // A barcode lookup can finish after the sheet opened: fill in what the user hasn't typed yet.
-    androidx.compose.runtime.LaunchedEffect(item.name, item.brand, item.notes, item.size) {
+    androidx.compose.runtime.LaunchedEffect(item.name, item.brand, item.notes, item.size, item.locationId) {
         if (name.isBlank()) name = item.name
         if (brand.isBlank()) brand = item.brand ?: ""
         if (notes.isBlank()) notes = item.notes
         if (size.isBlank()) size = item.size
+        if (!locationTouched) locationId = item.locationId
+    }
+    // Typing "milk" lights up Fridge: a live guess until the user picks a location themselves.
+    androidx.compose.runtime.LaunchedEffect(name, brand) {
+        if (locationTouched || item.id != 0L) return@LaunchedEffect
+        val kind = com.sovereignedge.pocketpantry.barcode.LocationGuesser.guess(name, brand) ?: return@LaunchedEffect
+        val match = com.sovereignedge.pocketpantry.barcode.LocationGuesser.matchLocation(kind, locations.map { it.name }) ?: return@LaunchedEffect
+        locations.firstOrNull { it.name == match }?.let { locationId = it.id }
     }
 
     ModalBottomSheet(onDismissRequest = onDismiss) {
@@ -92,7 +101,7 @@ fun ItemEditorSheet(
             Text("Location", style = MaterialTheme.typography.labelLarge)
             LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 items(locations, key = { it.id }) { loc ->
-                    FilterChip(selected = locationId == loc.id, onClick = { locationId = loc.id }, label = { Text(loc.name) })
+                    FilterChip(selected = locationId == loc.id, onClick = { locationId = loc.id; locationTouched = true }, label = { Text(loc.name) })
                 }
             }
             Row(horizontalArrangement = Arrangement.spacedBy(10.dp), verticalAlignment = androidx.compose.ui.Alignment.CenterVertically) {
