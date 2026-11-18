@@ -24,6 +24,17 @@ class SizeParserTest {
     }
 
     @Test
+    fun readsUsLiquidVolumes() {
+        assertEquals("1 gal", SizeParser.parse("Whole Milk, 1 Gallon"))
+        assertEquals("0.5 gal", SizeParser.parse("Orange Juice 0.5 gal"))
+        assertEquals("1 qt", SizeParser.parse("Half & Half, 1 qt."))
+        assertEquals("2 qt", SizeParser.parse("Chicken Broth 2 Quarts"))
+        assertEquals("1 pt", SizeParser.parse("Heavy Whipping Cream 1 Pint"))
+        assertEquals("6 × 1 pt", SizeParser.parse("Ice Cream 6 x 1 pt"))
+        assertNull(SizeParser.parse("Top 5 Galaxy Bars"))
+    }
+
+    @Test
     fun ignoresTextWithoutASize() {
         assertNull(SizeParser.parse("Bay Leaf"))
         assertNull(SizeParser.parse("30% Less Sodium"))
