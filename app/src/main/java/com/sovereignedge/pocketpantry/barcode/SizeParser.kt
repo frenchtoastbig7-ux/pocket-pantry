@@ -14,19 +14,21 @@ object SizeParser {
     private const val START = """(?<![\w./])"""
     private val physical = Regex("""$START$NUMBER\s*-?\s*($PHYSICAL)(?![a-z])""", RegexOption.IGNORE_CASE)
     private val single = Regex("""$START$NUMBER\s*-?\s*$UNIT(?![a-z])""", RegexOption.IGNORE_CASE)
+    private val multiPhysical = Regex("""$START$NUMBER\s*(?:x|×|pack of|pk of|ct of)\s*$NUMBER\s*-?\s*($PHYSICAL)(?![a-z])""", RegexOption.IGNORE_CASE)
     private val multi = Regex("""$START$NUMBER\s*(?:x|×|pack of|pk of|ct of)\s*$NUMBER\s*-?\s*$UNIT(?![a-z])""", RegexOption.IGNORE_CASE)
     private val packOf = Regex("""$START(?:pack of|case of)\s*(\d+)""", RegexOption.IGNORE_CASE)
 
     /** The first size found in [text], normalised, or null. */
     fun parse(text: String?): String? {
         if (text.isNullOrBlank()) return null
-        multi.find(text)?.let { m ->
-            return "${num(m.groupValues[1])} × ${num(m.groupValues[2])} ${unit(m.groupValues[3])}"
-        }
-        // A weight or volume beats a count: "2 bags, 16 oz" is 16 oz. "2 bags" on its own is still kept.
-        (physical.find(text) ?: single.find(text))?.let { m ->
-            return "${num(m.groupValues[1])} ${unit(m.groupValues[2])}"
-        }
+        // A weight or volume beats a count, multipack or not: "2 bags, 16 oz" and "2 x 10 sheets, 1 oz" are
+        // 16 oz and 1 oz. A count on its own ("2 bags", "2 x 10 sheets") is still kept.
+        fun multiple(m: MatchResult) = "${num(m.groupValues[1])} × ${num(m.groupValues[2])} ${unit(m.groupValues[3])}"
+        fun one(m: MatchResult) = "${num(m.groupValues[1])} ${unit(m.groupValues[2])}"
+        multiPhysical.find(text)?.let { return multiple(it) }
+        physical.find(text)?.let { return one(it) }
+        multi.find(text)?.let { return multiple(it) }
+        single.find(text)?.let { return one(it) }
         packOf.find(text)?.let { return "${it.groupValues[1]} pack" }
         return null
     }
@@ -35,7 +37,7 @@ object SizeParser {
     fun looksLikeSize(text: String?): Boolean {
         val t = text?.trim() ?: return false
         // Compare the matched span, not the normalised output: "1 Gallon" parses to "1 gal" and is still just a size.
-        val m = multi.find(t) ?: physical.find(t) ?: single.find(t) ?: packOf.find(t) ?: return false
+        val m = multiPhysical.find(t) ?: physical.find(t) ?: multi.find(t) ?: single.find(t) ?: packOf.find(t) ?: return false
         return m.value.length == t.length
     }
 

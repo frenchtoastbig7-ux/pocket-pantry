@@ -49,7 +49,9 @@ class Repo(context: Context, val deviceId: String, dbName: String = "pantry.db",
      * numbered from 1 again, so the counter carries on from where it was, across restarts too.
      */
     private fun keepSeqFloor() {
-        syncPrefs.edit().putLong(K_SEQ_FLOOR, localSeq).commit()
+        // Called inside the transaction that drops the log: if the floor can't be saved, throwing here rolls that
+        // back, which is better than a log that restarts from a seq peers have already seen.
+        check(syncPrefs.edit().putLong(K_SEQ_FLOOR, localSeq).commit()) { "could not save the sync sequence floor" }
     }
 
     private fun <T> watch(vararg tables: String, query: (SQLiteDatabase) -> T): Flow<T> =
@@ -209,6 +211,8 @@ class Repo(context: Context, val deviceId: String, dbName: String = "pantry.db",
                         values.put(col, localIdOf(d, refTable, refUuid) ?: ensureRow(d, SyncTable.byName.getValue(refTable), refUuid))
                     } else {
                         val col = table.columns[field] ?: continue
+                        // The photo column is a file name read back later; a peer must not be able to point it elsewhere.
+                        if (op.table == "recipes" && field == "photo" && raw != null && photoNamed(raw.toString()) == null) continue
                         putValue(values, col, raw)
                     }
                     d.insertWithOnConflict("clocks", null, cv("table_name" to op.table, "row_uuid" to op.row, "field" to field, "hlc" to op.hlc), SQLiteDatabase.CONFLICT_REPLACE)
@@ -224,6 +228,10 @@ class Repo(context: Context, val deviceId: String, dbName: String = "pantry.db",
      * and this one becomes part of a file name, so it must not be able to name anything outside [photosDir].
      */
     private fun photoFileFor(row: String): java.io.File? = if (SAFE_FILE_ROW.matches(row)) java.io.File(photosDir, "$row.jpg") else null
+
+    /** The file a stored photo name refers to, or null unless it is exactly `<plain id>.jpg` inside [photosDir]. */
+    private fun photoNamed(name: String): java.io.File? =
+        if (name.endsWith(".jpg") && SAFE_FILE_ROW.matches(name.removeSuffix(".jpg"))) java.io.File(photosDir, name) else null
 
     /** Inserts a row with defaults (and placeholder parents for required references) so a later set can fill it. */
     private fun ensureRow(d: SQLiteDatabase, table: SyncTable, uuid: String): Long {
@@ -279,9 +287,12 @@ class Repo(context: Context, val deviceId: String, dbName: String = "pantry.db",
         seed(SyncTable.byName.getValue("prices"), "(SELECT uuid FROM stores WHERE id = store_id), barcode, price, seen_at") {
             mapOf("store" to it.getString(1), "barcode" to it.getString(2), "price" to it.getDouble(3), "seen_at" to it.getLong(4))
         }
-        d.rawQuery("SELECT uuid, (SELECT uuid FROM stores WHERE id = store_id), started_at, finished_at FROM cart_sessions WHERE finished_at IS NOT NULL AND uuid NOT IN (SELECT row_uuid FROM ops WHERE table_name='cart_sessions')", null)
-            .mapAll { listOf(it.getString(0), it.getString(1), it.getLong(2), it.getLong(3)) }
-            .forEach { (uuid, store, started, finished) -> set("cart_sessions", uuid as String, mapOf("store" to store, "started_at" to started, "finished_at" to finished)) }
+        d.rawQuery("SELECT uuid, (SELECT uuid FROM stores WHERE id = store_id), started_at, finished_at, tax_rate FROM cart_sessions WHERE finished_at IS NOT NULL AND uuid NOT IN (SELECT row_uuid FROM ops WHERE table_name='cart_sessions')", null)
+            .mapAll { listOf(it.getString(0), it.getString(1), it.getLong(2), it.getLong(3), if (it.isNull(4)) null else it.getDouble(4)) }
+            .forEach { (uuid, store, started, finished, taxRate) ->
+                // The recorded rate travels with the trip; older trips have none and keep falling back to the store's.
+                set("cart_sessions", uuid as String, mapOf("store" to store, "started_at" to started, "finished_at" to finished) + (if (taxRate != null) mapOf("tax_rate" to taxRate) else emptyMap()))
+            }
         d.rawQuery("SELECT l.uuid, s.uuid, l.barcode, l.name, l.unit_price, l.qty, l.taxable FROM cart_lines l JOIN cart_sessions s ON s.id = l.session_id WHERE s.finished_at IS NOT NULL AND l.uuid NOT IN (SELECT row_uuid FROM ops WHERE table_name='cart_lines')", null)
             .mapAll { c -> c.getString(0) to mapOf("session" to c.getString(1), "barcode" to c.getStringOrNull(2), "name" to c.getString(3), "unit_price" to c.getDouble(4), "qty" to c.getDouble(5), "taxable" to c.getInt(6)) }
             .forEach { (uuid, fields) -> set("cart_lines", uuid, fields) }
@@ -291,7 +302,7 @@ class Repo(context: Context, val deviceId: String, dbName: String = "pantry.db",
         seed(SyncTable.byName.getValue("recipes"), "title, body, prompt, created_at, rating, photo") {
             val fields = mutableMapOf<String, Any?>("title" to it.getString(1), "body" to it.getString(2), "prompt" to it.getString(3), "created_at" to it.getLong(4), "rating" to it.getInt(5))
             // The photo op went with the old log; without this a newly joined phone gets the recipe but no picture.
-            val photo = it.getStringOrNull(6)?.let { name -> java.io.File(photosDir, name) }?.takeIf { f -> f.isFile }
+            val photo = it.getStringOrNull(6)?.let { name -> photoNamed(name) }?.takeIf { f -> f.isFile }
             if (photo != null) fields[PHOTO_FIELD] = android.util.Base64.encodeToString(photo.readBytes(), android.util.Base64.NO_WRAP)
             fields
         }
@@ -329,13 +340,17 @@ class Repo(context: Context, val deviceId: String, dbName: String = "pantry.db",
             }
             for (group in groups("stores")) {
                 val keep = group.first()
+                // Newest price chosen so far per barcode. Ops queued here aren't in the database yet, so with several
+                // duplicates each one must be compared with the pending winner, not only with what is stored.
+                val newest = HashMap<String, Long>()
                 for (dup in group.drop(1)) {
                     d.rawQuery("SELECT uuid, barcode, price, seen_at FROM prices WHERE store_id=?", arrayOf("${dup.first}"))
                         .mapAll { listOf(it.getString(0), it.getString(1), it.getDouble(2), it.getLong(3)) }
                         .forEach { (uuid, bc, price, seen) ->
                             // The surviving store keeps its own price for the barcode unless the duplicate's is newer.
-                            val kept = d.rawQuery("SELECT seen_at FROM prices WHERE store_id=? AND barcode=?", arrayOf("${keep.first}", bc as String)).firstOrNull { it.getLong(0) }
+                            val kept = newest[bc as String] ?: d.rawQuery("SELECT seen_at FROM prices WHERE store_id=? AND barcode=?", arrayOf("${keep.first}", bc)).firstOrNull { it.getLong(0) }
                             if (kept == null || (seen as Long) > kept) {
+                                newest[bc] = seen as Long
                                 set("prices", "price:${keep.second}:$bc", mapOf("store" to keep.second, "barcode" to bc, "price" to price, "seen_at" to seen))
                             }
                             delete("prices", uuid as String)
@@ -900,7 +915,7 @@ class Repo(context: Context, val deviceId: String, dbName: String = "pantry.db",
         set("recipes", uuidOf(d, "recipes", id), mapOf(PHOTO_FIELD to jpeg?.let { android.util.Base64.encodeToString(it, android.util.Base64.NO_WRAP) }))
     }
 
-    fun photoFile(recipe: Recipe): java.io.File? = recipe.photo?.let { java.io.File(photosDir, it) }?.takeIf { it.exists() }
+    fun photoFile(recipe: Recipe): java.io.File? = recipe.photo?.let { photoNamed(it) }?.takeIf { it.exists() }
 
     suspend fun deleteRecipe(id: Long) = commit { delete("recipes", uuidOf(d, "recipes", id)) }
 

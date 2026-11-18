@@ -166,8 +166,8 @@ fun ShoppingListScreen(app: PantryApp, modifier: Modifier = Modifier, onOpenSett
             },
             confirmButton = {
                 TextButton(enabled = name.isNotBlank(), onClick = {
-                    // Name and amount only: the tick may have changed on another phone while this dialog was open.
-                    scope.launch { app.repo.patchShoppingItem(entry.id, name = name, quantityText = qty) }
+                    // Only what was edited here: the tick, or the other text field, may have changed on another phone meanwhile.
+                    scope.launch { app.repo.patchShoppingItem(entry.id, name = name.takeIf { it != entry.name }, quantityText = qty.takeIf { it != entry.quantityText }) }
                     editing = null
                 }) { Text("Save") }
             },
