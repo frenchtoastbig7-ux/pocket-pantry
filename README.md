@@ -23,8 +23,10 @@ food in a household and what it costs to replace it.
   cooking preferences, stores, locations, currency, data.
 
 Everything is stored on the phone in SQLite. The API key is encrypted with an AES key held in the Android hardware
-Keystore (StrongBox / Titan M2 where available) and backups are disabled. There is no account, server or telemetry.
-Barcodes are read on-device with ML Kit's bundled model (no Play services needed); unknown barcodes are looked up on
+Keystore (StrongBox / Titan M2 where available) and backups are disabled. There is no account or server, and the app
+itself collects no telemetry. Barcodes are read on-device with ML Kit's bundled model (no Play services needed) and
+camera frames never leave the phone; the ML Kit SDK may still send Google its own diagnostics and usage metrics, as
+described in Google's ML Kit terms. Unknown barcodes are looked up on
 Open Food Facts, then UPCitemdb (US retail and store brands), and the answer is cached and shared with the household.
 Anything neither knows you name once.
 
@@ -68,8 +70,11 @@ Opus and Sonnet models.
 
 ## Building
 
+Needs JDK 21. If that isn't your default Java, point `JAVA_HOME` at it first, for example with Homebrew on macOS
+`export JAVA_HOME=/opt/homebrew/opt/openjdk@21/libexec/openjdk.jdk/Contents/Home`.
+
 ```bash
-JAVA_HOME=/opt/homebrew/opt/openjdk@21/libexec/openjdk.jdk/Contents/Home ./gradlew assembleDebug
+./gradlew assembleDebug
 ```
 
 Requires JDK 21 and an Android SDK with platform 37.2 (`local.properties` points at it). Release builds are

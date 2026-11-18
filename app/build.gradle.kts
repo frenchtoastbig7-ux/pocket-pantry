@@ -32,9 +32,11 @@ android {
         signingConfigs {
             create("release") {
                 storeFile = file(releaseKeystore)
-                storePassword = providers.gradleProperty("pocketpantry.storePassword").get()
-                keyAlias = providers.gradleProperty("pocketpantry.keyAlias").get()
-                keyPassword = providers.gradleProperty("pocketpantry.keyPassword").get()
+                // orNull, not get(): a missing value must not fail configuration, which would also break debug
+                // builds and Gradle sync. The release signing task reports it when it actually runs.
+                storePassword = providers.gradleProperty("pocketpantry.storePassword").orNull
+                keyAlias = providers.gradleProperty("pocketpantry.keyAlias").orNull
+                keyPassword = providers.gradleProperty("pocketpantry.keyPassword").orNull
             }
         }
     }
