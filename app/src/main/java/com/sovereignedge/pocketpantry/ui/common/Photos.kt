@@ -31,7 +31,7 @@ object Photos {
 
     private fun encode(source: Bitmap): ByteArray {
         val scale = MAX_EDGE.toFloat() / maxOf(source.width, source.height)
-        val bitmap = if (scale < 1f) Bitmap.createScaledBitmap(source, (source.width * scale).toInt(), (source.height * scale).toInt(), true) else source
+        val bitmap = if (scale < 1f) Bitmap.createScaledBitmap(source, (source.width * scale).toInt().coerceAtLeast(1), (source.height * scale).toInt().coerceAtLeast(1), true) else source
         return ByteArrayOutputStream().also { bitmap.compress(Bitmap.CompressFormat.JPEG, 85, it) }.toByteArray()
     }
 

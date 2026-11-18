@@ -41,12 +41,13 @@ class RecipeChat(private val repo: Repo, private val settings: Settings, private
         job = scope.launch {
             _state.value = State(streaming = true)
             var assistantId = -1L
+            val mine = coroutineContext[Job]
+            val builder = StringBuilder()
             try {
                 repo.appendChat("user", prompt.trim())
                 val history = repo.chatNow()
                 assistantId = repo.appendChat("assistant", "")
                 val system = systemPrompt(repo.itemsNow(), repo.locations().first(), repo.shoppingListNow())
-                val builder = StringBuilder()
                 var lastFlush = 0L
                 val text = claude.stream(system, history) { event ->
                     when (event) {
@@ -65,8 +66,10 @@ class RecipeChat(private val repo: Repo, private val settings: Settings, private
                 repo.updateChat(assistantId, text.ifBlank { "(no reply)" })
                 _state.value = _state.value.copy(streaming = false, draft = "")
             } catch (e: CancellationException) {
-                val partial = _state.value.draft
-                _state.value = State()
+                // This request's own text and, below, only its own state: by the time a cancelled request gets
+                // here a newer one may already be running, and its draft and Stop button must be left alone.
+                val partial = builder.toString()
+                if (job === mine) _state.value = State()
                 // This job is already cancelled, so an ordinary suspending call would throw at once and skip the cleanup.
                 if (assistantId > 0) {
                     kotlinx.coroutines.withContext(kotlinx.coroutines.NonCancellable) {

@@ -194,7 +194,8 @@ class ConnectorServer(
                 notes = args.text("notes") ?: item.notes,
                 lowThreshold = args.number("low_threshold") ?: item.lowThreshold,
             )
-            repo.upsertItem(updated, original = item, quantityDelta = args.number("quantity_delta"))
+            // An absolute quantity wins over a delta sent in the same request, as it always has.
+            repo.upsertItem(updated, original = item, quantityDelta = args.number("quantity_delta").takeIf { args.number("quantity") == null })
             val after = repo.item(id)!!
             "Updated ${after.name}: quantity ${fmt(after.quantity)} ${after.unit}".trim() + "."
         }

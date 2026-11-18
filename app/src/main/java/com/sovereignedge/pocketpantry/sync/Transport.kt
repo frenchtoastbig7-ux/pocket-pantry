@@ -126,12 +126,15 @@ class SyncServer(
                     }
                     launch {
                         try {
-                            client.use { onResult(protocol.exchange(it)) }
+                            onResult(protocol.exchange(client))
                         } catch (e: Exception) {
                             Log.i(TAG, "incoming sync failed: $e")
-                        } finally {
-                            slots.release()
                         }
+                    }.invokeOnCompletion {
+                        // Here rather than in a finally: a coroutine cancelled before it ever runs has no finally,
+                        // and the socket and the permit would be lost for good.
+                        runCatching { client.close() }
+                        slots.release()
                     }
                 }
             } finally {

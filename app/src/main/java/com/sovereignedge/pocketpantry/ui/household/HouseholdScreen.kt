@@ -96,7 +96,7 @@ fun HouseholdScreen(app: PantryApp, onBack: () -> Unit) {
     var joining by remember { mutableStateOf(false) }
     var addPeer by remember { mutableStateOf(false) }
     var confirmLeave by remember { mutableStateOf(false) }
-    var linkToConfirm by remember { mutableStateOf<String?>(null) }
+    var linkToConfirm by rememberSaveable { mutableStateOf<String?>(null) }
     var name by rememberSaveable(household.deviceName) { mutableStateOf(household.deviceName) }
     val addrs = remember(household.joined, status.listening) { Addresses.local() }
 

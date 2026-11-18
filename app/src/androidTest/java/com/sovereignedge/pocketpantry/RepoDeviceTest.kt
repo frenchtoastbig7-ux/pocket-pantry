@@ -129,16 +129,26 @@ class RepoDeviceTest {
     fun aPeerCannotNameAFileOutsideThePhotoDirectory() = runBlocking {
         val jpeg = android.util.Base64.encodeToString(byteArrayOf(1, 2, 3), android.util.Base64.NO_WRAP)
         val hlc = Hlc("device-x")
+        val outside = File(context.filesDir, "escaped.jpg").also { it.delete() }
+        // The write on its own first, so a delete that follows can't tidy up after a write that got through.
         repo.applyRemote(
             listOf(
                 Op(Hlc.newId(), "device-x", 1, hlc.next(), "recipes", "../escaped", Op.SET, JSONObject().put("title", "Evil").put("photo_b64", jpeg)),
                 Op(Hlc.newId(), "device-x", 2, hlc.next(), "shopping_list", Hlc.newId(), Op.SET, JSONObject().put("name", "Eggs").put("photo_b64", jpeg)),
-                Op(Hlc.newId(), "device-x", 3, hlc.next(), "recipes", "../escaped", Op.DELETE, JSONObject()),
             ),
         )
-        assertFalse(File(context.filesDir, "escaped.jpg").exists())
+        assertFalse(outside.exists())
         assertTrue(repo.photosDir.listFiles().orEmpty().isEmpty())
         assertEquals("Eggs", repo.shoppingListNow().single().name)
+        // Then the delete, against a file that must survive it.
+        outside.writeBytes(byteArrayOf(1))
+        repo.applyRemote(listOf(Op(Hlc.newId(), "device-x", 3, hlc.next(), "recipes", "../escaped", Op.DELETE, JSONObject())))
+        assertTrue(outside.exists())
+        outside.delete()
+        // A stored photo name that points elsewhere is neither accepted nor followed.
+        val recipe = Hlc.newId()
+        repo.applyRemote(listOf(Op(Hlc.newId(), "device-x", 4, hlc.next(), "recipes", recipe, Op.SET, JSONObject().put("title", "Toast").put("photo", "../../databases/repo-test.db"))))
+        assertEquals(null, repo.recipesNow().single { it.title == "Toast" }.photo)
     }
 
     @Test

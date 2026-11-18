@@ -40,6 +40,9 @@ class SizeParserTest {
         assertEquals("2 bag", SizeParser.parse("Rice 2 bags"))
         assertEquals("12 ct", SizeParser.parse("Large Eggs, 12 ct"))
         assertFalse(SizeParser.looksLikeSize("2 bags, 16 oz"))
+        assertEquals("1 oz", SizeParser.parse("Nori 2 x 10 sheets, 1 oz"))
+        assertEquals("2 × 10 sheet", SizeParser.parse("Nori 2 x 10 sheets"))
+        assertEquals("6 × 12 fl oz", SizeParser.parse("Cola 6 x 12 fl oz cans"))
     }
 
     @Test

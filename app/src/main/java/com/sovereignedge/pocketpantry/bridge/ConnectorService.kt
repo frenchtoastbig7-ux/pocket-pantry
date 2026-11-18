@@ -138,14 +138,22 @@ class ConnectorService : Service() {
                     notify("Couldn't start")
                     return@withLock
                 }
-                val published = synchronized(lifecycle) { (!destroyed).also { if (it) server = candidate } }
+                // Publishing the listener and reporting it as running happen under the same lock as teardown, so
+                // onDestroy can neither miss the listener nor have its Stopped overwritten by a late Running.
+                val published = synchronized(lifecycle) {
+                    (!destroyed).also {
+                        if (it) {
+                            server = candidate
+                            boundHost = host
+                            status.value = Status.Running(host, port)
+                        }
+                    }
+                }
                 if (!published) {
                     candidate.stop() // onDestroy ran while start() was still in progress
                     return@withLock
                 }
-                boundHost = host
-                status.value = Status.Running(host, port)
-                notify("Listening on $host:$port")
+                if (!synchronized(lifecycle) { destroyed }) notify("Listening on $host:$port")
             }
         }
     }
@@ -154,10 +162,10 @@ class ConnectorService : Service() {
         if (callbackRegistered) runCatching { getSystemService(ConnectivityManager::class.java).unregisterNetworkCallback(networkCallback) }
         val running = synchronized(lifecycle) {
             destroyed = true
+            status.value = Status.Stopped
             server.also { server = null }
         }
         running?.stop()
-        status.value = Status.Stopped
         scope.cancel()
         super.onDestroy()
     }
