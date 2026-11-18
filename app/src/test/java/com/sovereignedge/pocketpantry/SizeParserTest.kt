@@ -41,6 +41,11 @@ class SizeParserTest {
         assertNull(SizeParser.parse(null))
         assertTrue(SizeParser.looksLikeSize("16 oz"))
         assertTrue(SizeParser.looksLikeSize("12 fl oz"))
+        assertTrue(SizeParser.looksLikeSize("1 Gallon"))
+        assertTrue(SizeParser.looksLikeSize(" 16 Ounce "))
+        assertTrue(SizeParser.looksLikeSize("4 x 15 Ounces"))
+        assertFalse(SizeParser.looksLikeSize("Whole Milk, 1 Gallon"))
+        assertFalse(SizeParser.looksLikeSize(null))
         assertFalse(SizeParser.looksLikeSize("9-11"))
         assertFalse(SizeParser.looksLikeSize("Multi-Color"))
     }

@@ -28,7 +28,12 @@ object SizeParser {
     }
 
     /** True when [text] is itself just a size ("16 oz"), as opposed to a sentence or junk like "9-11". */
-    fun looksLikeSize(text: String?): Boolean = text != null && parse(text)?.length == text.trim().length
+    fun looksLikeSize(text: String?): Boolean {
+        val t = text?.trim() ?: return false
+        // Compare the matched span, not the normalised output: "1 Gallon" parses to "1 gal" and is still just a size.
+        val m = multi.find(t) ?: single.find(t) ?: packOf.find(t) ?: return false
+        return m.value.length == t.length
+    }
 
     private fun num(raw: String): String = raw.replace(',', '.').let { if ('.' in it) it.trimEnd('0').trimEnd('.') else it }.ifEmpty { "0" }
 
