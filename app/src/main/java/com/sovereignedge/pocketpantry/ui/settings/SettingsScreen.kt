@@ -315,14 +315,23 @@ fun SettingsScreen(app: PantryApp, onBack: () -> Unit, onOpenHousehold: () -> Un
         )
     }
     if (confirmWipe) {
-        ConfirmDialog("Delete all data?", "Pantry, carts, lists, recipes, stores and the API key are erased.", confirmLabel = "Delete everything",
+        ConfirmDialog(
+            "Delete all data?",
+            "Pantry, carts, lists, recipes, recipe photos, stores and the API key are erased." + if (app.household.isJoined) " This phone also leaves its household; the other phones keep their data." else "",
+            confirmLabel = "Delete everything",
             onConfirm = {
                 scope.launch {
                     app.chat.clear()
-                    app.repo.wipe()
+                    // Leave first. A phone that stays joined would get the deleted rows straight back from a peer,
+                    // because the wipe also clears the clocks and tombstones that would have refused them.
+                    if (app.household.isJoined) app.leaveHousehold()
+                    val photosGone = app.repo.wipe()
                     app.settings.wipe()
                     app.claude.forget()
-                    snackbar.showSnackbar("All data deleted")
+                    // The fields on this screen hold their own copy; without this the old text is still shown and
+                    // the next keystroke writes it back.
+                    app.settings.current.let { diet = it.dietaryNotes; household = it.household; currency = it.currency }
+                    snackbar.showSnackbar(if (photosGone) "All data deleted" else "Data deleted, but some recipe photos could not be removed")
                 }
             }, onDismiss = { confirmWipe = false })
     }

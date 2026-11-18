@@ -51,7 +51,11 @@ class Hlc(private val device: String) {
         if (now > millis) {
             millis = now
             counter = 0
-        } else counter++
+        } else if (++counter > MAX_COUNTER) {
+            // Four hex digits is all the format has room for; "10000" would sort before "ffff". Carry instead.
+            millis++
+            counter = 0
+        }
         return format(millis, counter, device)
     }
 
@@ -71,7 +75,10 @@ class Hlc(private val device: String) {
     }
 
     companion object {
-        fun format(millis: Long, counter: Int, device: String) = "%013d-%04x-%s".format(millis, counter, device)
+        private const val MAX_COUNTER = 0xffff
+
+        // Locale.ROOT: the default locale can format %d with non-ASCII digits, which no longer sort as text.
+        fun format(millis: Long, counter: Int, device: String) = "%013d-%04x-%s".format(java.util.Locale.ROOT, millis, counter, device)
         fun newId(): String = UUID.randomUUID().toString()
     }
 }
@@ -111,7 +118,7 @@ class SyncTable(
                 defaults = mapOf("barcode" to "", "price" to 0.0, "seen_at" to 0L), bus = "prices",
             ),
             SyncTable(
-                "cart_sessions", mapOf("started_at" to "started_at", "finished_at" to "finished_at"), refs = mapOf("store" to ("store_id" to "stores")),
+                "cart_sessions", mapOf("started_at" to "started_at", "finished_at" to "finished_at", "tax_rate" to "tax_rate"), refs = mapOf("store" to ("store_id" to "stores")),
                 defaults = mapOf("started_at" to 0L), bus = "cart",
             ),
             SyncTable(

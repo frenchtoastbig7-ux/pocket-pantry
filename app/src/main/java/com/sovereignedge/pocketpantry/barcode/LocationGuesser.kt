@@ -34,8 +34,9 @@ object LocationGuesser {
         "fresh vegetable", "produce", "fermented", "kimchi", "sauerkraut", "pickles", "guacamole", "pesto", "jam", "jelly", "fillet", "fillets", "steaks", "cutlets",
         "thighs", "breasts", "wings", "drumsticks", "ribs", "roast", "chops", "mince", "tenderloin", "brisket",
     )
+    // "roast" is left out on purpose: on its own it also describes coffee, nuts and vegetables ("French Roast Coffee").
     // A cut of meat or fish is fresh (or frozen, which the caller already respects) even when the species word is a pantry staple ("tuna").
-    private val freshCut = words("fillet", "fillets", "steak", "steaks", "thighs", "breasts", "wings", "drumsticks", "chops", "cutlets", "roast", "ribs", "tenderloin", "brisket", "ground beef", "ground turkey", "fresh")
+    private val freshCut = words("fillet", "fillets", "steak", "steaks", "thighs", "breasts", "wings", "drumsticks", "chops", "cutlets", "ribs", "tenderloin", "brisket", "ground beef", "ground turkey", "fresh")
     private val counter = words(
         "banana", "bananas", "avocado", "avocados", "tomato", "tomatoes", "onion", "onions", "garlic", "potato", "potatoes", "sweet potato", "sweet potatoes",
         "shallot", "shallots", "bread", "loaf", "bagel", "bagels", "baguette", "rolls", "buns", "tortillas", "apple", "apples", "orange", "oranges", "lemon",

@@ -53,6 +53,9 @@ fun AppRoot(app: PantryApp) {
         val pendingJoin by app.pendingJoin.collectAsStateWithLifecycle()
         androidx.compose.runtime.LaunchedEffect(pendingJoin) { if (pendingJoin != null) showHousehold = true }
         val chromeVisible = remember { mutableStateOf(true) }
+        // Keeps each tab's rememberSaveable state (a half-typed recipe request, a search) while another tab or
+        // Settings is on screen; without it the tab's state is dropped as soon as it leaves the composition.
+        val tabState = androidx.compose.runtime.saveable.rememberSaveableStateHolder()
         CompositionLocalProvider(LocalChromeVisible provides chromeVisible) { Surface {
             if (showConnector) {
                 BackHandler { showConnector = false }
@@ -80,11 +83,13 @@ fun AppRoot(app: PantryApp) {
                 ) { padding ->
                     val modifier = if (chromeVisible.value) Modifier.padding(bottom = padding.calculateBottomPadding()) else Modifier
                     AnimatedContent(targetState = Tab.entries[tabIndex], label = "tab") { tab ->
-                        when (tab) {
-                            Tab.Pantry -> InventoryScreen(app, modifier, onOpenSettings = { showSettings = true })
-                            Tab.Cart -> CartScreen(app, modifier, onOpenSettings = { showSettings = true })
-                            Tab.List -> ShoppingListScreen(app, modifier, onOpenSettings = { showSettings = true })
-                            Tab.Recipes -> RecipesScreen(app, modifier, onOpenSettings = { showSettings = true })
+                        tabState.SaveableStateProvider(tab.name) {
+                            when (tab) {
+                                Tab.Pantry -> InventoryScreen(app, modifier, onOpenSettings = { showSettings = true })
+                                Tab.Cart -> CartScreen(app, modifier, onOpenSettings = { showSettings = true })
+                                Tab.List -> ShoppingListScreen(app, modifier, onOpenSettings = { showSettings = true })
+                                Tab.Recipes -> RecipesScreen(app, modifier, onOpenSettings = { showSettings = true })
+                            }
                         }
                     }
                 }

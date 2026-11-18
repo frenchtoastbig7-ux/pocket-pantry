@@ -37,7 +37,7 @@ import com.sovereignedge.pocketpantry.data.Item
 import com.sovereignedge.pocketpantry.data.Location
 import com.sovereignedge.pocketpantry.ui.common.ConfirmDialog
 import com.sovereignedge.pocketpantry.ui.common.fmtDate
-import com.sovereignedge.pocketpantry.ui.common.fmtNumber
+import com.sovereignedge.pocketpantry.ui.common.fmtEditable
 import com.sovereignedge.pocketpantry.ui.common.parseNumber
 import java.time.LocalDate
 import java.time.ZoneOffset
@@ -54,13 +54,13 @@ fun ItemEditorSheet(
 ) {
     var name by rememberSaveable { mutableStateOf(item.name) }
     var brand by rememberSaveable { mutableStateOf(item.brand ?: "") }
-    var quantity by rememberSaveable { mutableStateOf(fmtNumber(item.quantity)) }
+    var quantity by rememberSaveable { mutableStateOf(fmtEditable(item.quantity)) }
     var unit by rememberSaveable { mutableStateOf(item.unit) }
     var size by rememberSaveable { mutableStateOf(item.size) }
     var locationId by rememberSaveable { mutableStateOf(item.locationId) }
     var locationTouched by rememberSaveable { mutableStateOf(item.id != 0L) }
     var expiresOn by rememberSaveable { mutableStateOf(item.expiresOn) }
-    var lowThreshold by rememberSaveable { mutableStateOf(item.lowThreshold?.let(::fmtNumber) ?: "") }
+    var lowThreshold by rememberSaveable { mutableStateOf(item.lowThreshold?.let(::fmtEditable) ?: "") }
     var notes by rememberSaveable { mutableStateOf(item.notes) }
     var pickDate by remember { mutableStateOf(false) }
     var confirmDelete by remember { mutableStateOf(false) }
@@ -75,6 +75,9 @@ fun ItemEditorSheet(
     // Typing "milk" lights up Fridge: a live guess until the user picks a location themselves.
     androidx.compose.runtime.LaunchedEffect(name, brand) {
         if (locationTouched || item.id != 0L) return@LaunchedEffect
+        // A scanned item whose name is still the one the lookup filled in already carries the better answer in
+        // item.locationId: where this barcode is usually kept. The guess from the name is for typed names.
+        if (item.barcode != null && name == item.name) return@LaunchedEffect
         val kind = com.sovereignedge.pocketpantry.barcode.LocationGuesser.guess(name, brand) ?: return@LaunchedEffect
         val match = com.sovereignedge.pocketpantry.barcode.LocationGuesser.matchLocation(kind, locations.map { it.name }) ?: return@LaunchedEffect
         locations.firstOrNull { it.name == match }?.let { locationId = it.id }

@@ -40,8 +40,9 @@ class BarcodeDeviceTest {
         val online = runCatching { InetAddress.getByName("world.openfoodfacts.org").hostAddress != null }.getOrDefault(false)
         assumeTrue("needs network", online)
         val context = InstrumentationRegistry.getInstrumentation().targetContext
-        context.deleteDatabase("pantry.db")
-        val repo = Repo(context, "test-device")
+        // Its own database: "pantry.db" is the app's real one, and deleting it would erase the pantry on the test device.
+        context.deleteDatabase("barcode-test.db")
+        val repo = Repo(context, "test-device", "barcode-test.db")
         val lookup = ProductLookup(repo)
         val first = lookup.lookup(ean)
         assertNotNull("Open Food Facts should know $ean", first)

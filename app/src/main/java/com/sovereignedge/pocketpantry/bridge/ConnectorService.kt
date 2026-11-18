@@ -59,6 +59,9 @@ class ConnectorService : Service() {
     private var server: ConnectorServer? = null
     private var boundHost: String? = null
     private var callbackRegistered = false
+    /** Guards [server] and [destroyed], so a listener that finishes starting during teardown is stopped, not published. */
+    private val lifecycle = Any()
+    private var destroyed = false
 
     private val networkCallback = object : ConnectivityManager.NetworkCallback() {
         override fun onAvailable(network: Network) = rebind()
@@ -70,11 +73,14 @@ class ConnectorService : Service() {
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         val app = application as PantryApp
+        // Promote before anything else: stopping a service started with startForegroundService() without
+        // ever calling startForeground() gets the app killed.
+        notify("Starting")
         if (!app.settings.current.connectorEnabled) {
+            stopForeground(STOP_FOREGROUND_REMOVE)
             stopSelf()
             return START_NOT_STICKY
         }
-        notify("Starting")
         if (!callbackRegistered) {
             // The default request excludes VPNs; drop NOT_VPN so Tailscale's network is reported too.
             val request = NetworkRequest.Builder().removeCapability(NetworkCapabilities.NET_CAPABILITY_NOT_VPN).build()
@@ -132,7 +138,11 @@ class ConnectorService : Service() {
                     notify("Couldn't start")
                     return@withLock
                 }
-                server = candidate
+                val published = synchronized(lifecycle) { (!destroyed).also { if (it) server = candidate } }
+                if (!published) {
+                    candidate.stop() // onDestroy ran while start() was still in progress
+                    return@withLock
+                }
                 boundHost = host
                 status.value = Status.Running(host, port)
                 notify("Listening on $host:$port")
@@ -142,8 +152,11 @@ class ConnectorService : Service() {
 
     override fun onDestroy() {
         if (callbackRegistered) runCatching { getSystemService(ConnectivityManager::class.java).unregisterNetworkCallback(networkCallback) }
-        server?.stop()
-        server = null
+        val running = synchronized(lifecycle) {
+            destroyed = true
+            server.also { server = null }
+        }
+        running?.stop()
         status.value = Status.Stopped
         scope.cancel()
         super.onDestroy()

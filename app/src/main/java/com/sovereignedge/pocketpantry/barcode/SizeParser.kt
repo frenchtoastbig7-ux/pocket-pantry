@@ -5,11 +5,17 @@ package com.sovereignedge.pocketpantry.barcode
  * Retail databases rarely give a clean size field, but the title almost always carries one.
  */
 object SizeParser {
-    private const val NUMBER = """(\d+(?:[.,]\d+)?)"""
-    private const val UNIT = """(fl\.?\s*oz\.?|fluid\s+ounces?|oz\.?|ounces?|lbs?\.?|pounds?|kgs?|kilograms?|g|grams?|mg|ml|milliliters?|millilitres?|l|liters?|litres?|gal\.?|gallons?|qts?\.?|quarts?|pts?\.?|pints?|ct\.?|count|pk|pack|pcs?|pieces?|sheets?|bags?|cans?|bottles?|rolls?)"""
-    private val single = Regex("""(?<![\w.])$NUMBER\s*-?\s*$UNIT(?![a-z])""", RegexOption.IGNORE_CASE)
-    private val multi = Regex("""(?<![\w.])$NUMBER\s*(?:x|×|pack of|pk of|ct of)\s*$NUMBER\s*-?\s*$UNIT(?![a-z])""", RegexOption.IGNORE_CASE)
-    private val packOf = Regex("""(?<![\w.])(?:pack of|case of)\s*(\d+)""", RegexOption.IGNORE_CASE)
+    // A mixed number ("1 1/2"), a fraction ("1/2") or a decimal. The fraction forms come first, and a match may not
+    // start right after a slash, so "1/2 gallon" is never read as "2 gallon".
+    private const val NUMBER = """(\d+\s+\d+/\d+|\d+/\d+|\d+(?:[.,]\d+)?)"""
+    private const val PHYSICAL = """fl\.?\s*oz\.?|fluid\s+ounces?|oz\.?|ounces?|lbs?\.?|pounds?|kgs?|kilograms?|g|grams?|mg|ml|milliliters?|millilitres?|l|liters?|litres?|gal\.?|gallons?|qts?\.?|quarts?|pts?\.?|pints?"""
+    private const val COUNT = """ct\.?|count|pk|pack|pcs?|pieces?|sheets?|bags?|cans?|bottles?|rolls?"""
+    private const val UNIT = "($PHYSICAL|$COUNT)"
+    private const val START = """(?<![\w./])"""
+    private val physical = Regex("""$START$NUMBER\s*-?\s*($PHYSICAL)(?![a-z])""", RegexOption.IGNORE_CASE)
+    private val single = Regex("""$START$NUMBER\s*-?\s*$UNIT(?![a-z])""", RegexOption.IGNORE_CASE)
+    private val multi = Regex("""$START$NUMBER\s*(?:x|×|pack of|pk of|ct of)\s*$NUMBER\s*-?\s*$UNIT(?![a-z])""", RegexOption.IGNORE_CASE)
+    private val packOf = Regex("""$START(?:pack of|case of)\s*(\d+)""", RegexOption.IGNORE_CASE)
 
     /** The first size found in [text], normalised, or null. */
     fun parse(text: String?): String? {
@@ -17,11 +23,9 @@ object SizeParser {
         multi.find(text)?.let { m ->
             return "${num(m.groupValues[1])} × ${num(m.groupValues[2])} ${unit(m.groupValues[3])}"
         }
-        single.find(text)?.let { m ->
-            val value = num(m.groupValues[1])
-            val unit = unit(m.groupValues[2])
-            // "2 bags" on its own is a count, not a size; keep it only when nothing better exists.
-            return "$value $unit"
+        // A weight or volume beats a count: "2 bags, 16 oz" is 16 oz. "2 bags" on its own is still kept.
+        (physical.find(text) ?: single.find(text))?.let { m ->
+            return "${num(m.groupValues[1])} ${unit(m.groupValues[2])}"
         }
         packOf.find(text)?.let { return "${it.groupValues[1]} pack" }
         return null
@@ -31,11 +35,11 @@ object SizeParser {
     fun looksLikeSize(text: String?): Boolean {
         val t = text?.trim() ?: return false
         // Compare the matched span, not the normalised output: "1 Gallon" parses to "1 gal" and is still just a size.
-        val m = multi.find(t) ?: single.find(t) ?: packOf.find(t) ?: return false
+        val m = multi.find(t) ?: physical.find(t) ?: single.find(t) ?: packOf.find(t) ?: return false
         return m.value.length == t.length
     }
 
-    private fun num(raw: String): String = raw.replace(',', '.').let { if ('.' in it) it.trimEnd('0').trimEnd('.') else it }.ifEmpty { "0" }
+    private fun num(raw: String): String = if ('/' in raw) raw.trim().replace(Regex("\\s+"), " ") else raw.replace(',', '.').let { if ('.' in it) it.trimEnd('0').trimEnd('.') else it }.ifEmpty { "0" }
 
     private fun unit(raw: String): String {
         val u = raw.lowercase().replace(".", "").replace(Regex("\\s+"), " ").trim()

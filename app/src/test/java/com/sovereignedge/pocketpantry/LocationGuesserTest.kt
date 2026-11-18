@@ -35,6 +35,8 @@ class LocationGuesserTest {
         assertEquals(Kind.PANTRY, LocationGuesser.guess("SNACK ON THE RUN! CHICKEN SALAD & CRACKERS"))
         assertEquals(Kind.PANTRY, LocationGuesser.guess("Pineapple Chunks"))
         assertEquals(Kind.FRIDGE, LocationGuesser.guess("Ahi Tuna Steaks"))
+        assertEquals(Kind.PANTRY, LocationGuesser.guess("French Roast Coffee"))
+        assertEquals(Kind.FRIDGE, LocationGuesser.guess("Beef Chuck Roast"))
         assertEquals(Kind.FRIDGE, LocationGuesser.guess("Wild Alaskan Cod Fillets"))
         assertNull(LocationGuesser.guess("Bay Leaf"))
         assertNull(LocationGuesser.guess(""))

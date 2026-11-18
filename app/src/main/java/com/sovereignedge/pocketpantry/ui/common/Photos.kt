@@ -14,7 +14,10 @@ object Photos {
 
     fun fromUri(context: Context, uri: Uri): ByteArray? {
         val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
-        context.contentResolver.openInputStream(uri)?.use { BitmapFactory.decodeStream(it, null, bounds) } ?: return null
+        // A bounds-only decode returns null by design and fills in `bounds`, so its result says nothing; check
+        // that the stream opened and that the image has a size.
+        val opened = context.contentResolver.openInputStream(uri)?.use { BitmapFactory.decodeStream(it, null, bounds); true } ?: false
+        if (!opened || bounds.outWidth <= 0 || bounds.outHeight <= 0) return null
         var sample = 1
         while (maxOf(bounds.outWidth, bounds.outHeight) / (sample * 2) >= MAX_EDGE) sample *= 2
         val bitmap = context.contentResolver.openInputStream(uri)?.use {

@@ -4,6 +4,7 @@ import com.sovereignedge.pocketpantry.data.Op
 import com.sovereignedge.pocketpantry.data.Repo
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import org.json.JSONArray
@@ -31,6 +32,14 @@ class Protocol(private val repo: Repo, private val household: Household, private
     class HouseholdMismatch : IOException("The other phone is in a different household")
 
     suspend fun exchange(socket: Socket): Result = withContext(Dispatchers.IO) {
+        // SO_TIMEOUT only bounds reads. A peer that stops reading leaves our write blocked for good, holding the
+        // manager's sync lock; closing the socket is the only thing that frees it. So it is closed at the deadline,
+        // and also whenever this exchange is cancelled or fails.
+        val watchdog = launch { try { delay(EXCHANGE_DEADLINE_MS) } finally { runCatching { socket.close() } } }
+        try { converse(socket) } finally { watchdog.cancel() }
+    }
+
+    private suspend fun converse(socket: Socket): Result {
         val key = household.encryptionKey() ?: throw IOException("Not in a household")
         val householdId = household.householdId()!!
         val frames = Frames(key, householdId.toByteArray())
@@ -51,6 +60,7 @@ class Protocol(private val repo: Repo, private val household: Household, private
         val peerAddrs = hello.optJSONArray("addrs")?.let { arr -> (0 until arr.length()).map { arr.getString(it) } } ?: emptyList()
         if (peerDevice == household.deviceId) throw IOException("Connected to ourselves")
 
+        val mark = repo.opLogMark()
         val mine = repo.cursors()
         frames.write(out, JSONObject().put("t", "have").put("cursors", JSONObject(mine.mapValues { it.value as Any })).toString())
         val have = JSONObject(frames.read(input))
@@ -61,23 +71,28 @@ class Protocol(private val repo: Repo, private val household: Household, private
         var sent = 0
         coroutineScope {
             val reader = launch {
-                while (true) {
-                    val msg = JSONObject(frames.read(input))
-                    when (msg.optString("t")) {
-                        "ops" -> {
-                            val arr = msg.getJSONArray("ops")
-                            val ops = (0 until arr.length()).map { Op.fromJson(arr.getJSONObject(it)) }
-                            repo.applyRemote(ops)
-                            received += ops.size
+                try {
+                    while (true) {
+                        val msg = JSONObject(frames.read(input))
+                        when (msg.optString("t")) {
+                            "ops" -> {
+                                val arr = msg.getJSONArray("ops")
+                                val ops = (0 until arr.length()).map { Op.fromJson(arr.getJSONObject(it)) }
+                                repo.applyRemote(ops)
+                                received += ops.size
+                            }
+                            "done" -> break
+                            else -> throw IOException("Unexpected message ${msg.optString("t")}")
                         }
-                        "done" -> break
-                        else -> throw IOException("Unexpected message ${msg.optString("t")}")
                     }
+                } catch (e: Throwable) {
+                    runCatching { socket.close() } // unblocks the writer below if it is stuck mid-write
+                    throw e
                 }
             }
             var after = ""
             while (true) {
-                val batch = repo.opsMissingFrom(theirs, BATCH, after)
+                val batch = repo.opsMissingFrom(theirs, BATCH, after, upTo = mark)
                 if (batch.isEmpty()) break
                 frames.write(out, JSONObject().put("t", "ops").put("ops", JSONArray(batch.map { it.toJson() })).toString())
                 sent += batch.size
@@ -86,10 +101,11 @@ class Protocol(private val repo: Repo, private val household: Household, private
             frames.write(out, JSONObject().put("t", "done").toString())
             reader.join()
         }
-        Result(peerDevice, peerName, peerAddrs, received, sent)
+        return Result(peerDevice, peerName, peerAddrs, received, sent)
     }
 
     private companion object {
         const val BATCH = 400
+        const val EXCHANGE_DEADLINE_MS = 10 * 60_000L
     }
 }

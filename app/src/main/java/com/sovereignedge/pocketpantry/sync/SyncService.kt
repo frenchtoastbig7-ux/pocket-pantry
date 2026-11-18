@@ -23,10 +23,6 @@ class SyncService : Service() {
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         val app = application as PantryApp
-        if (!app.household.current.backgroundSync || !app.household.isJoined) {
-            stopSelf()
-            return START_NOT_STICKY
-        }
         val manager = getSystemService(NotificationManager::class.java)
         manager.createNotificationChannel(
             NotificationChannel(CHANNEL, "Household sync", NotificationManager.IMPORTANCE_MIN).apply { description = "Shown while Pocket Pantry stays reachable for household sync" },
@@ -39,7 +35,14 @@ class SyncService : Service() {
             .setContentIntent(open)
             .setOngoing(true)
             .build()
+        // Always promote first: a service started with startForegroundService() that stops without calling
+        // startForeground() gets the app killed, and the user may have opted out after the start was requested.
         startForeground(NOTIFICATION_ID, notification, ServiceInfo.FOREGROUND_SERVICE_TYPE_SPECIAL_USE)
+        if (!app.household.current.backgroundSync || !app.household.isJoined) {
+            stopForeground(STOP_FOREGROUND_REMOVE)
+            stopSelf()
+            return START_NOT_STICKY
+        }
         app.sync.start()
         return START_STICKY
     }

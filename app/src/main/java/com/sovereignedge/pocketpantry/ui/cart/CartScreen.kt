@@ -147,9 +147,12 @@ fun CartScreen(app: PantryApp, modifier: Modifier = Modifier, onOpenSettings: ()
             // Cached products answer instantly; a remembered price means no dialog at all.
             val cached = app.repo.product(code)
             val lastPrice = app.repo.lastPrice(store.id, code)
-            if (cached != null && lastPrice != null) {
+            // Skipping the dialog also skips the taxable switch, so only do it when the answer is known: the
+            // product was bought here before, or this store charges no tax at all.
+            val lastTaxable = app.repo.lastTaxable(store.id, code)
+            if (cached != null && lastPrice != null && (lastTaxable != null || store.taxRate == 0.0)) {
                 lookingUp = false
-                addLine(sessionId, code, cached.name, lastPrice, 1.0, false, rememberName = false)
+                addLine(sessionId, code, cached.name, lastPrice, 1.0, lastTaxable ?: false, rememberName = false)
                 return@launch
             }
             pending = PendingLine(code, cached?.name ?: "", lastPrice, knownProduct = cached != null)
@@ -262,9 +265,10 @@ fun CartScreen(app: PantryApp, modifier: Modifier = Modifier, onOpenSettings: ()
                                         Text(money(line.lineTotal, currency), style = MaterialTheme.typography.titleMedium)
                                         Row(verticalAlignment = Alignment.CenterVertically) {
                                             AppIconButton(R.drawable.ic_remove, "One fewer", onClick = {
-                                                scope.launch { if (line.qty <= 1) app.repo.deleteCartLine(line.id) else app.repo.updateCartLine(line.copy(qty = line.qty - 1)) }
+                                                // Against the stored quantity: two quick taps must both count.
+                                                scope.launch { app.repo.changeCartLineQty(line.id, -1.0) }
                                             })
-                                            AppIconButton(R.drawable.ic_add, "One more", onClick = { scope.launch { app.repo.updateCartLine(line.copy(qty = line.qty + 1)) } })
+                                            AppIconButton(R.drawable.ic_add, "One more", onClick = { scope.launch { app.repo.changeCartLineQty(line.id, 1.0) } })
                                         }
                                     }
                                 }
@@ -333,7 +337,7 @@ private fun LineDialog(
 ) {
     var name by rememberSaveable { mutableStateOf(initialName) }
     var price by rememberSaveable { mutableStateOf(initialPrice?.let { "%.2f".format(it) } ?: "") }
-    var qty by rememberSaveable { mutableStateOf(fmtNumber(initialQty)) }
+    var qty by rememberSaveable { mutableStateOf(com.sovereignedge.pocketpantry.ui.common.fmtEditable(initialQty)) }
     var taxable by rememberSaveable { mutableStateOf(initialTaxable) }
     LaunchedEffect(initialName) { if (name.isBlank()) name = initialName }
     val valid = name.isNotBlank() && parseNumber(price) != null && (parseNumber(qty) ?: 0.0) > 0
@@ -381,6 +385,7 @@ private fun FinishTripDialog(app: PantryApp, session: CartSession, lines: List<C
     var autoSort by rememberSaveable { mutableStateOf(true) }
     var locationId by rememberSaveable { mutableStateOf(settings.defaultLocationId) }
     val scope = rememberCoroutineScope()
+    var submitting by remember { mutableStateOf(false) }
     val chosen = locations.firstOrNull { it.id == locationId } ?: locations.firstOrNull()
     AlertDialog(
         onDismissRequest = onDismiss,
@@ -408,14 +413,19 @@ private fun FinishTripDialog(app: PantryApp, session: CartSession, lines: List<C
             }
         },
         confirmButton = {
-            TextButton(enabled = !addToPantry || chosen != null, onClick = {
+            TextButton(enabled = !submitting && (!addToPantry || chosen != null), onClick = {
+                submitting = true
                 scope.launch {
-                    if (addToPantry && chosen != null) {
-                        app.repo.stockFromCart(lines, chosen.id, autoSort)
-                        app.settings.setDefaultLocation(chosen.id)
+                    try {
+                        // One transaction, and a no-op for a trip that is already finished: neither a second tap
+                        // nor a checkout cut short and tried again can stock the pantry twice.
+                        val stockInto = if (addToPantry) chosen?.id else null
+                        app.repo.checkout(session, stockInto, autoSort)
+                        if (stockInto != null) app.settings.setDefaultLocation(stockInto)
+                        onDone(addToPantry)
+                    } finally {
+                        submitting = false
                     }
-                    app.repo.finishSession(session)
-                    onDone(addToPantry)
                 }
             }) { Text("Finish") }
         },
@@ -481,7 +491,7 @@ private fun StorePicker(
 @Composable
 fun StoreDialog(store: Store = Store(0, "", 0.0), onDismiss: () -> Unit, onSave: (Store) -> Unit) {
     var name by rememberSaveable { mutableStateOf(store.name) }
-    var tax by rememberSaveable { mutableStateOf(if (store.taxRate == 0.0) "" else fmtNumber(store.taxRate)) }
+    var tax by rememberSaveable { mutableStateOf(if (store.taxRate == 0.0) "" else com.sovereignedge.pocketpantry.ui.common.fmtEditable(store.taxRate)) }
     AlertDialog(
         onDismissRequest = onDismiss,
         title = { Text(if (store.id == 0L) "Add store" else "Edit store") },

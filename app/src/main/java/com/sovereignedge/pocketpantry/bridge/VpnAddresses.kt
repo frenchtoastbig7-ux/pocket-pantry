@@ -30,7 +30,9 @@ object VpnAddresses {
         runCatching {
             NetworkInterface.getNetworkInterfaces()?.toList().orEmpty().filter { it.isUp }.forEach { nif ->
                 nif.inetAddresses.toList().filterIsInstance<Inet4Address>().forEach { addr ->
-                    if (isVpnInterfaceName(nif.name) || isCgnat(addr)) {
+                    // By interface name only. A 100.64.0.0/10 address is not proof of a VPN: carriers and some
+                    // Wi-Fi networks hand those out too, and the connector's token would then travel in the clear.
+                    if (isVpnInterfaceName(nif.name)) {
                         found.putIfAbsent(addr.hostAddress!!, Candidate(addr.hostAddress!!, nif.name, label(addr)))
                     }
                 }

@@ -61,7 +61,9 @@ class SecretStore(context: Context) {
         (ks.getKey(ALIAS, null) as? SecretKey)?.let { return it }
         return try {
             generate(strongBox = true)
-        } catch (_: StrongBoxUnavailableException) {
+        } catch (_: Exception) {
+            // Not only StrongBoxUnavailableException: some devices reject the StrongBox request with a
+            // ProviderException or InvalidAlgorithmParameterException instead. Any failure falls back to the TEE.
             generate(strongBox = false)
         }
     }

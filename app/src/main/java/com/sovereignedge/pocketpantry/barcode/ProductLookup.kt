@@ -31,9 +31,12 @@ class ProductLookup(private val repo: Repo) {
             }
             return cached
         }
+        // The scanner also reads QR codes, and their text can be anything: a Wi-Fi password, a private link.
+        // Only something shaped like a retail barcode is ever sent to a catalogue.
+        if (!RETAIL_CODE.matches(barcode)) return null
         val remote = fetchOpenFoodFacts(barcode) ?: fetchUpcItemDb(barcode) ?: return null
-        repo.rememberProduct(remote)
-        return remote
+        // If the user named the product while the request was out, their name stays.
+        return repo.rememberProductIfAbsent(remote)
     }
 
     private fun get(url: String): JSONObject? = runCatching {
@@ -83,6 +86,8 @@ class ProductLookup(private val repo: Repo) {
 
     private companion object {
         const val TAG = "PantryScan"
+        /** UPC-E, EAN-8, UPC-A, EAN-13 and GTIN-14 are all digits, 6 to 14 of them. */
+        val RETAIL_CODE = Regex("""\d{6,14}""")
         const val USER_AGENT = "PocketPantry/0.2 (Android; https://github.com/frenchtoastbig7-ux/pocket-pantry)"
     }
 }

@@ -48,6 +48,13 @@ fun money(amount: Double, currency: String): String {
 fun fmtNumber(value: Double): String =
     if (value % 1.0 == 0.0) value.toLong().toString() else "%.2f".format(Locale.getDefault(), value).trimEnd('0').trimEnd('.')
 
+/**
+ * For text fields: every digit the value has. [fmtNumber] rounds to two places, which is right for display but
+ * would turn 1.234 into 1.23 (and 0.001 into 0) when a dialog is saved without touching the quantity.
+ */
+fun fmtEditable(value: Double): String =
+    if (value % 1.0 == 0.0) value.toLong().toString() else java.math.BigDecimal(value.toString()).stripTrailingZeros().toPlainString()
+
 fun fmtDate(date: LocalDate): String = date.format(DateTimeFormatter.ofLocalizedDate(FormatStyle.MEDIUM))
 
 fun fmtDateTime(epochMillis: Long): String =
