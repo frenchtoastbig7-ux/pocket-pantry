@@ -54,62 +54,106 @@ object Addresses {
 
     fun onTailscale(): Boolean = local().any { it.tailscale }
 
-    /** "host:port" or "[v6]:port" or a bare host (defaults to [SYNC_PORT]). */
-    fun parse(addr: String): InetSocketAddress {
+    /** Splits "host:port", "[v6]:port" or a bare host into host and port text (null when no port was written). */
+    private fun split(addr: String): Pair<String, String?> {
         val text = addr.trim()
-        if (text.startsWith("[")) {
-            val host = text.substringAfter('[').substringBefore(']')
-            val port = text.substringAfter("]:", "").toIntOrNull() ?: SYNC_PORT
-            return InetSocketAddress(host, port)
-        }
-        val colons = text.count { it == ':' }
-        return when {
-            colons == 0 -> InetSocketAddress(text, SYNC_PORT)
-            colons == 1 -> InetSocketAddress(text.substringBefore(':'), text.substringAfter(':').toIntOrNull() ?: SYNC_PORT)
-            else -> InetSocketAddress(text, SYNC_PORT) // bare IPv6
-        }
+        if (text.startsWith("[")) return text.substringAfter('[').substringBefore(']') to text.substringAfter("]:", "").ifEmpty { null }
+        return if (text.count { it == ':' } == 1) text.substringBefore(':') to text.substringAfter(':') else text to null // several colons: bare IPv6
     }
+
+    /** "host:port" or "[v6]:port" or a bare host (defaults to [SYNC_PORT]). Resolves a host name; throws on a bad port. */
+    fun parse(addr: String): InetSocketAddress {
+        val (host, port) = split(addr)
+        return InetSocketAddress(host, if (port == null) SYNC_PORT else port.toIntOrNull() ?: throw IllegalArgumentException("bad port in $addr"))
+    }
+
+    /** Whether [addr] could be dialled: a host and, if a port is written, one in range. Nothing is resolved. */
+    fun isValid(addr: String): Boolean {
+        val (host, port) = split(addr)
+        return host.isNotBlank() && host.none { it.isWhitespace() } && (port == null || port.toIntOrNull() in 1..65535)
+    }
+
+    /** Whether [addr] is a Tailscale address, judged from its text alone; a host name is never looked up here. */
+    fun isTailscaleAddr(addr: String): Boolean = runCatching {
+        val host = split(addr).first
+        (NUMERIC_V4.matches(host) || ':' in host) && isTailscale(InetAddress.getByName(host))
+    }.getOrDefault(false)
+
+    private val NUMERIC_V4 = Regex("""\d{1,3}(\.\d{1,3}){3}""")
 }
 
 /** Accepts incoming sync connections from household phones. */
-class SyncServer(private val protocol: Protocol, private val scope: CoroutineScope, private val onResult: suspend (Protocol.Result) -> Unit) {
+class SyncServer(
+    private val protocol: Protocol,
+    private val scope: CoroutineScope,
+    /** Told true once the port is bound and false when the listener ends; never true for a failed bind. */
+    private val onListening: (Boolean) -> Unit = {},
+    private val onResult: suspend (Protocol.Result) -> Unit,
+) {
+    private val lock = Any()
     private var server: ServerSocket? = null
     private var job: Job? = null
+    private var generation = 0
+    /** Each exchange can buffer a frame of several megabytes before the peer has proved it knows the household. */
+    private val slots = java.util.concurrent.Semaphore(MAX_INCOMING)
 
     val running: Boolean get() = job?.isActive == true
 
     fun start() {
         if (running) return
+        val mine = synchronized(lock) { ++generation }
         job = scope.launch(Dispatchers.IO) {
             val socket = try {
-                ServerSocket(SYNC_PORT).also { it.reuseAddress = true }
+                ServerSocket().apply { reuseAddress = true; bind(InetSocketAddress(SYNC_PORT)) }
             } catch (e: Exception) {
                 Log.w(TAG, "listen failed: $e")
                 return@launch
             }
-            server = socket
+            // stop() may have run while we were binding. It had no socket to close then, so close it here
+            // rather than block in accept() with the port held.
+            val current = synchronized(lock) { (mine == generation).also { if (it) server = socket } }
+            if (!current) {
+                runCatching { socket.close() }
+                return@launch
+            }
+            onListening(true)
             try {
                 while (!socket.isClosed) {
                     val client = try { socket.accept() } catch (_: Exception) { break }
+                    if (!slots.tryAcquire()) {
+                        runCatching { client.close() }
+                        continue
+                    }
                     launch {
                         try {
                             client.use { onResult(protocol.exchange(it)) }
                         } catch (e: Exception) {
                             Log.i(TAG, "incoming sync failed: $e")
+                        } finally {
+                            slots.release()
                         }
                     }
                 }
             } finally {
                 runCatching { socket.close() }
+                if (synchronized(lock) { mine == generation }) onListening(false)
             }
         }
     }
 
     fun stop() {
-        runCatching { server?.close() }
+        synchronized(lock) {
+            generation++
+            runCatching { server?.close() }
+            server = null
+        }
         job?.cancel()
         job = null
-        server = null
+        onListening(false)
+    }
+
+    private companion object {
+        const val MAX_INCOMING = 4
     }
 }
 
@@ -145,9 +189,13 @@ class LanDiscovery(
     private var multicastLock: WifiManager.MulticastLock? = null
     private var beacon: Job? = null
     private var beaconSocket: DatagramSocket? = null
+    private val resolving = java.util.concurrent.ConcurrentHashMap.newKeySet<NsdManager.ServiceInfoCallback>()
+    /** False once [stop] has run: results that were already on their way are dropped. */
+    @Volatile private var active = false
 
     fun start() {
         if (registration != null) return
+        active = true
         // Phones drop multicast and broadcast frames unless an app holds this lock.
         multicastLock = wifi?.createMulticastLock("pocketpantry-sync")?.apply { setReferenceCounted(false); runCatching { acquire() } }
         startNsd()
@@ -183,6 +231,7 @@ class LanDiscovery(
     }
 
     private fun resolved(serviceInfo: NsdServiceInfo) {
+        if (!active) return
         val addresses = if (Build.VERSION.SDK_INT >= 34) serviceInfo.hostAddresses else listOfNotNull(serviceInfo.host)
         // Prefer IPv4; Android reports link-local IPv6 with a scope suffix that can't be dialled as written.
         val host = (addresses.firstOrNull { it is Inet4Address } ?: addresses.firstOrNull { !it.isLinkLocalAddress })?.hostAddress?.substringBefore('%') ?: return
@@ -199,14 +248,14 @@ class LanDiscovery(
                 nsd.registerServiceInfoCallback(
                     info, context.mainExecutor,
                     object : NsdManager.ServiceInfoCallback {
-                        override fun onServiceInfoCallbackRegistrationFailed(errorCode: Int) = Unit
+                        override fun onServiceInfoCallbackRegistrationFailed(errorCode: Int) { resolving.remove(this) }
                         override fun onServiceUpdated(serviceInfo: NsdServiceInfo) {
                             resolved(serviceInfo)
-                            runCatching { nsd.unregisterServiceInfoCallback(this) }
+                            if (resolving.remove(this)) runCatching { nsd.unregisterServiceInfoCallback(this) }
                         }
                         override fun onServiceLost() = Unit
                         override fun onServiceInfoCallbackUnregistered() = Unit
-                    },
+                    }.also { resolving.add(it) },
                 )
             }.onFailure { e -> Log.w(TAG, "nsd resolve: $e") }
         } else {
@@ -260,6 +309,7 @@ class LanDiscovery(
                     val parts = String(packet.data, 0, packet.length).split(' ')
                     if (parts.size != 4 || parts[0] != "pp1" || parts[1] != householdId.take(16) || parts[2] == deviceId) continue
                     val host = packet.address.hostAddress?.substringBefore('%') ?: continue
+                    if (!active) break
                     Log.i(TAG, "beacon from ${parts[2]} at $host")
                     onFound(host, parts[3].toIntOrNull() ?: SYNC_PORT, parts[2])
                 }
@@ -280,6 +330,9 @@ class LanDiscovery(
     }.getOrDefault(listOf(InetAddress.getByName("255.255.255.255")))
 
     fun stop() {
+        active = false
+        // Lookups still waiting for an answer would otherwise report a phone after discovery has stopped.
+        resolving.toList().forEach { if (resolving.remove(it)) runCatching { nsd.unregisterServiceInfoCallback(it) } }
         registration?.let { runCatching { nsd.unregisterService(it) } }
         discovery?.let { runCatching { nsd.stopServiceDiscovery(it) } }
         registration = null

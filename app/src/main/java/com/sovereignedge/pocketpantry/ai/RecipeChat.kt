@@ -66,10 +66,13 @@ class RecipeChat(private val repo: Repo, private val settings: Settings, private
                 _state.value = _state.value.copy(streaming = false, draft = "")
             } catch (e: CancellationException) {
                 val partial = _state.value.draft
-                if (assistantId > 0) {
-                    if (partial.isBlank()) repo.deleteChat(assistantId) else repo.updateChat(assistantId, partial)
-                }
                 _state.value = State()
+                // This job is already cancelled, so an ordinary suspending call would throw at once and skip the cleanup.
+                if (assistantId > 0) {
+                    kotlinx.coroutines.withContext(kotlinx.coroutines.NonCancellable) {
+                        runCatching { if (partial.isBlank()) repo.deleteChat(assistantId) else repo.updateChat(assistantId, partial) }
+                    }
+                }
                 throw e
             } catch (e: Exception) {
                 if (assistantId > 0 && _state.value.draft.isBlank()) repo.deleteChat(assistantId)

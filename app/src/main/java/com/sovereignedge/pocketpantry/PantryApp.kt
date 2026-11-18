@@ -47,6 +47,15 @@ class PantryApp : Application(), CameraXConfig.Provider {
         }
     }
 
+    /** Stops syncing and forgets the household and its replication log; the data itself stays on this phone. */
+    suspend fun leaveHousehold() {
+        sync.stop()
+        SyncService.stop(this)
+        household.setBackgroundSync(false)
+        household.leave()
+        repo.clearSyncState()
+    }
+
     fun onActivityStarted() {
         foregrounded = true
         sync.start()

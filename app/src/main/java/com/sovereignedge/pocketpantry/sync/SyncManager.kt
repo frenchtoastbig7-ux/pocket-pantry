@@ -34,12 +34,13 @@ class SyncManager(private val context: Context, val repo: Repo, val household: H
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default + kotlinx.coroutines.CoroutineExceptionHandler { _, e -> Log.w("PantrySync", "background sync task failed: $e") })
     private val protocol = Protocol(repo, household) { Addresses.local().map { it.hostPort } }
     private val client = SyncClient(protocol)
-    private val server = SyncServer(protocol, scope) { onExchanged(it, incoming = true) }
+    private val server = SyncServer(protocol, scope, onListening = { up -> _status.value = _status.value.copy(listening = up) }) { onExchanged(it, incoming = true) }
     private var discovery: LanDiscovery? = null
     private val discovered = ConcurrentHashMap<String, String>() // deviceId -> host:port
     private val syncLock = Mutex()
     private var loop: Job? = null
     private var debounce: Job? = null
+    private var changeWatch: Job? = null
 
     private val _status = MutableStateFlow(SyncStatus())
     val status: StateFlow<SyncStatus> = _status
@@ -57,12 +58,14 @@ class SyncManager(private val context: Context, val repo: Repo, val household: H
         server.start()
         discovery = LanDiscovery(context, householdId, household.deviceId, scope) { host, port, dev ->
             val addr = if (':' in host) "[$host]:$port" else "$host:$port"
+            // Beacons are unauthenticated: anyone on the Wi-Fi can read the household prefix and announce any
+            // number of made-up devices. Keep a bounded set, and let a burst of finds share one sync.
+            if (discovered.size >= MAX_DISCOVERED && !discovered.containsKey(dev)) return@LanDiscovery
             if (discovered.put(dev, addr) != addr) {
                 _status.value = _status.value.copy(discovered = discovered.size)
-                scope.launch { syncNow(reason = "found $dev") }
+                scheduleSoon(reason = "found $dev", delayMs = FOUND_DELAY_MS)
             }
         }.also { it.start() }
-        _status.value = _status.value.copy(listening = true)
         loop = scope.launch {
             delay(1500)
             while (true) {
@@ -70,14 +73,13 @@ class SyncManager(private val context: Context, val repo: Repo, val household: H
                 delay(PERIOD_MS)
             }
         }
-        scope.launch { repo.changeTicks().collect { if (it != "peers" && it != "chat") scheduleSoon() } }
+        changeWatch = scope.launch { repo.changeTicks().collect { if (it != "peers" && it != "chat") scheduleSoon() } }
     }
 
     /** Full stop: used when leaving the household. */
     fun stop() {
         pause()
         server.stop()
-        _status.value = _status.value.copy(listening = false)
     }
 
     /**
@@ -87,6 +89,8 @@ class SyncManager(private val context: Context, val repo: Repo, val household: H
     fun pause() {
         loop?.cancel(); loop = null
         debounce?.cancel(); debounce = null
+        // Otherwise an incoming sync while paused schedules outbound work, and every start() adds another collector.
+        changeWatch?.cancel(); changeWatch = null
         discovery?.stop(); discovery = null
         discovered.clear()
         _status.value = _status.value.copy(discovered = 0)
@@ -98,11 +102,11 @@ class SyncManager(private val context: Context, val repo: Repo, val household: H
     }
 
     /** A local change happened: push it to whoever is reachable, after a short quiet period. */
-    private fun scheduleSoon() {
+    private fun scheduleSoon(reason: String = "change", delayMs: Long = DEBOUNCE_MS) {
         debounce?.cancel()
         debounce = scope.launch {
-            delay(DEBOUNCE_MS)
-            syncNow(reason = "change")
+            delay(delayMs)
+            syncNow(reason = reason)
         }
     }
 
@@ -116,7 +120,9 @@ class SyncManager(private val context: Context, val repo: Repo, val household: H
             val targets = LinkedHashMap<String, List<String>>() // device -> candidate addrs in order
             discovered.forEach { (dev, addr) -> targets[dev] = listOf(addr) }
             for (peer in peers) {
-                val ordered = peer.addrs.sortedByDescending { addr -> onTailscale == Addresses.isTailscale(Addresses.parse(addr).let { java.net.InetAddress.getByName(it.hostString) }) }
+                // Sorted from the text alone. Resolving a host name here would let one dead name abort the whole
+                // sync; it is resolved inside syncDevice, where a failure just moves on to the next address.
+                val ordered = peer.addrs.sortedByDescending { addr -> onTailscale == Addresses.isTailscaleAddr(addr) }
                 targets[peer.deviceId] = (targets[peer.deviceId] ?: emptyList()) + ordered
             }
             if (targets.isEmpty()) return "No other phone known yet. Join on the same Wi-Fi or add an address."
@@ -170,5 +176,7 @@ class SyncManager(private val context: Context, val repo: Repo, val household: H
     private companion object {
         const val PERIOD_MS = 120_000L
         const val DEBOUNCE_MS = 2_500L
+        const val FOUND_DELAY_MS = 300L
+        const val MAX_DISCOVERED = 32
     }
 }

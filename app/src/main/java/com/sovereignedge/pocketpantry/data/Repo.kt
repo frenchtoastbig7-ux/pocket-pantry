@@ -12,7 +12,7 @@ import kotlinx.coroutines.flow.filter
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.flowOn
 import kotlinx.coroutines.flow.map
-import kotlinx.coroutines.flow.onStart
+import kotlinx.coroutines.flow.onSubscription
 import kotlinx.coroutines.withContext
 import org.json.JSONArray
 import org.json.JSONObject
@@ -22,10 +22,12 @@ import org.json.JSONObject
  * tables go through [commit] as ops, which are applied locally exactly as a remote op would be and kept in the op
  * log for other household devices. Only the live cart and the recipe chat are written directly.
  */
-class Repo(context: Context, val deviceId: String, dbName: String = "pantry.db") {
+class Repo(context: Context, val deviceId: String, dbName: String = "pantry.db", photosDirName: String = "recipe-photos") {
     private val helper = PantryDb(context, dbName)
     /** Recipe photos live here as `<recipe uuid>.jpg`; they replicate inside ops as base64. */
-    val photosDir: java.io.File = java.io.File(context.filesDir, "recipe-photos").apply { mkdirs() }
+    val photosDir: java.io.File = java.io.File(context.filesDir, photosDirName).apply { mkdirs() }
+    /** Outlives the op log: the highest seq this device ever used, so leaving a household never reuses one. */
+    private val syncPrefs = context.getSharedPreferences("sync-$dbName", Context.MODE_PRIVATE)
     private val db: SQLiteDatabase get() = helper.writableDatabase
     private val changes = MutableSharedFlow<String>(extraBufferCapacity = 256)
 
@@ -36,11 +38,24 @@ class Repo(context: Context, val deviceId: String, dbName: String = "pantry.db")
 
     init {
         db.rawQuery("SELECT MAX(hlc) FROM ops", null).use { if (it.moveToFirst()) it.getString(0)?.let(hlc::observe) }
-        localSeq = db.rawQuery("SELECT COALESCE(MAX(seq), 0) FROM ops WHERE device=?", arrayOf(deviceId)).single { it.getLong(0) }
+        localSeq = maxOf(
+            db.rawQuery("SELECT COALESCE(MAX(seq), 0) FROM ops WHERE device=?", arrayOf(deviceId)).single { it.getLong(0) },
+            syncPrefs.getLong(K_SEQ_FLOOR, 0L),
+        )
+    }
+
+    /**
+     * Called when the op log is dropped. Peers that already hold seq 1..n from this device would ignore new ops
+     * numbered from 1 again, so the counter carries on from where it was, across restarts too.
+     */
+    private fun keepSeqFloor() {
+        syncPrefs.edit().putLong(K_SEQ_FLOOR, localSeq).commit()
     }
 
     private fun <T> watch(vararg tables: String, query: (SQLiteDatabase) -> T): Flow<T> =
-        changes.onStart { emit(tables.first()) }
+        // onSubscription, not onStart: the first query must run only once this collector is already
+        // listening, or a write landing in between is never seen and the screen stays stale.
+        changes.onSubscription { emit(tables.first()) }
             .filter { it in tables }
             .map { query(db) }
             .conflate()
@@ -111,17 +126,32 @@ class Repo(context: Context, val deviceId: String, dbName: String = "pantry.db")
     }
 
     /** Ops a peer with [theirCursors] is missing, oldest first, so parents arrive before children. */
-    suspend fun opsMissingFrom(theirCursors: Map<String, Long>, limit: Int = 500, afterHlc: String = "", maxBytes: Int = 2_000_000): List<Op> = read { d ->
+    suspend fun opsMissingFrom(theirCursors: Map<String, Long>, limit: Int = 500, afterHlc: String = "", maxBytes: Int = 2_000_000, upTo: Long = Long.MAX_VALUE): List<Op> = read { d ->
         val mine = d.rawQuery("SELECT DISTINCT device FROM ops", null).mapAll { it.getString(0) }
         val clauses = mine.joinToString(" OR ") { "(device=? AND seq>?)" }
         if (clauses.isEmpty()) return@read emptyList()
-        val args = mine.flatMap { listOf(it, (theirCursors[it] ?: 0L).toString()) } + afterHlc + limit.toString()
+        val args = mine.flatMap { listOf(it, (theirCursors[it] ?: 0L).toString()) } + afterHlc + upTo.toString() + limit.toString()
         var bytes = 0
-        d.rawQuery("SELECT op_id, device, seq, hlc, table_name, row_uuid, kind, payload FROM ops WHERE ($clauses) AND hlc > ? ORDER BY hlc LIMIT ?", args.toTypedArray())
-            .mapAll { Op(it.getString(0), it.getString(1), it.getLong(2), it.getString(3), it.getString(4), it.getString(5), it.getString(6), JSONObject(it.getString(7))) }
-            // Photo ops are big; keep each batch to a few megabytes so a sync frame stays small.
-            .takeWhile { op -> bytes += op.fields.toString().length; bytes <= maxBytes || bytes == op.fields.toString().length }
+        d.rawQuery("SELECT op_id, device, seq, hlc, table_name, row_uuid, kind, payload FROM ops WHERE ($clauses) AND hlc > ? AND local_seq <= ? ORDER BY hlc LIMIT ?", args.toTypedArray()).use { c ->
+            buildList {
+                // Photo ops are big; keep each batch to a few megabytes so a sync frame stays small. Stop reading
+                // at the budget rather than loading the whole page first. One oversized op still goes out alone.
+                while (c.moveToNext()) {
+                    val payload = c.getString(7)
+                    if (isNotEmpty() && bytes + payload.length > maxBytes) break
+                    bytes += payload.length
+                    add(Op(c.getString(0), c.getString(1), c.getLong(2), c.getString(3), c.getString(4), c.getString(5), c.getString(6), JSONObject(payload)))
+                }
+            }
+        }
     }
+
+    /**
+     * Marks the op log as it is now, for [opsMissingFrom]'s `upTo`. Paging one exchange over a fixed set matters:
+     * ops relayed in from a third phone between two pages could otherwise be sent only in part (the ones whose hlc
+     * happens to fall after the page cursor), and the peer's "highest seq held" would then hide the rest for good.
+     */
+    suspend fun opLogMark(): Long = read { d -> d.rawQuery("SELECT COALESCE(MAX(local_seq), 0) FROM ops", null).single { it.getLong(0) } }
 
     suspend fun opCount(): Long = read { d -> d.rawQuery("SELECT COUNT(*) FROM ops", null).single { it.getLong(0) } }
 
@@ -142,7 +172,7 @@ class Repo(context: Context, val deviceId: String, dbName: String = "pantry.db")
                 }
                 d.delete(op.table, "uuid=?", arrayOf(op.row))
                 d.delete("clocks", "table_name=? AND row_uuid=?", arrayOf(op.table, op.row))
-                if (op.table == "recipes") java.io.File(photosDir, "${op.row}.jpg").delete()
+                if (op.table == "recipes") photoFileFor(op.row)?.delete()
             }
             Op.DELTA -> {
                 val field = op.fields.keys().asSequence().firstOrNull() ?: return null
@@ -163,7 +193,8 @@ class Repo(context: Context, val deviceId: String, dbName: String = "pantry.db")
                     val ref = table.refs[field]
                     if (field == PHOTO_FIELD) {
                         // The photo itself: write (or remove) the file and point the photo column at it.
-                        val file = java.io.File(photosDir, "${op.row}.jpg")
+                        if (op.table != "recipes") continue
+                        val file = photoFileFor(op.row) ?: continue
                         if (raw is String && raw.isNotEmpty()) {
                             file.writeBytes(android.util.Base64.decode(raw, android.util.Base64.NO_WRAP))
                             values.put("photo", file.name)
@@ -187,6 +218,12 @@ class Repo(context: Context, val deviceId: String, dbName: String = "pantry.db")
         }
         return table.bus
     }
+
+    /**
+     * The photo file for a recipe row, or null when the row id is not a plain id. Row ids arrive from other phones,
+     * and this one becomes part of a file name, so it must not be able to name anything outside [photosDir].
+     */
+    private fun photoFileFor(row: String): java.io.File? = if (SAFE_FILE_ROW.matches(row)) java.io.File(photosDir, "$row.jpg") else null
 
     /** Inserts a row with defaults (and placeholder parents for required references) so a later set can fill it. */
     private fun ensureRow(d: SQLiteDatabase, table: SyncTable, uuid: String): Long {
@@ -251,8 +288,12 @@ class Repo(context: Context, val deviceId: String, dbName: String = "pantry.db")
         seed(SyncTable.byName.getValue("shopping_list"), "name, quantity_text, barcode, checked, created_at") {
             mapOf("name" to it.getString(1), "quantity_text" to it.getString(2), "barcode" to it.getStringOrNull(3), "checked" to it.getInt(4), "created_at" to it.getLong(5))
         }
-        seed(SyncTable.byName.getValue("recipes"), "title, body, prompt, created_at, rating") {
-            mapOf("title" to it.getString(1), "body" to it.getString(2), "prompt" to it.getString(3), "created_at" to it.getLong(4), "rating" to it.getInt(5))
+        seed(SyncTable.byName.getValue("recipes"), "title, body, prompt, created_at, rating, photo") {
+            val fields = mutableMapOf<String, Any?>("title" to it.getString(1), "body" to it.getString(2), "prompt" to it.getString(3), "created_at" to it.getLong(4), "rating" to it.getInt(5))
+            // The photo op went with the old log; without this a newly joined phone gets the recipe but no picture.
+            val photo = it.getStringOrNull(6)?.let { name -> java.io.File(photosDir, name) }?.takeIf { f -> f.isFile }
+            if (photo != null) fields[PHOTO_FIELD] = android.util.Base64.encodeToString(photo.readBytes(), android.util.Base64.NO_WRAP)
+            fields
         }
     }
 
@@ -292,7 +333,11 @@ class Repo(context: Context, val deviceId: String, dbName: String = "pantry.db")
                     d.rawQuery("SELECT uuid, barcode, price, seen_at FROM prices WHERE store_id=?", arrayOf("${dup.first}"))
                         .mapAll { listOf(it.getString(0), it.getString(1), it.getDouble(2), it.getLong(3)) }
                         .forEach { (uuid, bc, price, seen) ->
-                            set("prices", "price:${keep.second}:$bc", mapOf("store" to keep.second, "barcode" to bc, "price" to price, "seen_at" to seen))
+                            // The surviving store keeps its own price for the barcode unless the duplicate's is newer.
+                            val kept = d.rawQuery("SELECT seen_at FROM prices WHERE store_id=? AND barcode=?", arrayOf("${keep.first}", bc as String)).firstOrNull { it.getLong(0) }
+                            if (kept == null || (seen as Long) > kept) {
+                                set("prices", "price:${keep.second}:$bc", mapOf("store" to keep.second, "barcode" to bc, "price" to price, "seen_at" to seen))
+                            }
                             delete("prices", uuid as String)
                         }
                     d.rawQuery("SELECT uuid, finished_at FROM cart_sessions WHERE store_id=?", arrayOf("${dup.first}"))
@@ -368,17 +413,26 @@ class Repo(context: Context, val deviceId: String, dbName: String = "pantry.db")
     }
 
     /** True when nothing but the seeded defaults exists, so joining a household can start from the other phone's data. */
-    suspend fun isPristine(): Boolean = read { d ->
-        fun count(sql: String) = d.rawQuery(sql, null).single { it.getLong(0) }
-        count("SELECT COUNT(*) FROM items") == 0L && count("SELECT COUNT(*) FROM shopping_list") == 0L && count("SELECT COUNT(*) FROM recipes") == 0L &&
-            count("SELECT COUNT(*) FROM cart_sessions WHERE finished_at IS NOT NULL") == 0L && count("SELECT COUNT(*) FROM ops") == 0L &&
-            d.storesNow().map { it.name } == listOf(PantryDb.DEFAULT_STORE) && d.locationsNow().map { it.name } == PantryDb.DEFAULT_LOCATIONS
+    suspend fun isPristine(): Boolean = read { it.isPristineNow() }
+
+    private fun SQLiteDatabase.isPristineNow(): Boolean {
+        fun count(sql: String) = rawQuery(sql, null).single { it.getLong(0) }
+        // cart_lines covers a trip in progress: it has no ops, and it would be deleted along with its store.
+        return count("SELECT COUNT(*) FROM items") == 0L && count("SELECT COUNT(*) FROM shopping_list") == 0L && count("SELECT COUNT(*) FROM recipes") == 0L &&
+            count("SELECT COUNT(*) FROM cart_sessions WHERE finished_at IS NOT NULL") == 0L && count("SELECT COUNT(*) FROM cart_lines") == 0L &&
+            count("SELECT COUNT(*) FROM ops") == 0L &&
+            storesNow().map { it.name } == listOf(PantryDb.DEFAULT_STORE) && locationsNow().map { it.name } == PantryDb.DEFAULT_LOCATIONS
     }
 
-    /** Removes the seeded defaults (without ops) so a joined household's locations and stores arrive without duplicates. */
-    suspend fun dropDefaultsForJoin() = write(T_LOCATIONS, T_STORES, T_CART) { d ->
+    /**
+     * Removes the seeded defaults (without ops) so a joined household's locations and stores arrive without
+     * duplicates. Only when the phone [isPristine], checked in the same transaction; returns whether it did.
+     */
+    suspend fun dropDefaultsForJoin(): Boolean = write(T_LOCATIONS, T_STORES, T_CART) { d ->
+        if (!d.isPristineNow()) return@write false
         d.delete("locations", null, null)
         d.delete("stores", null, null)
+        true
     }
 
     // ---------- Peers ----------
@@ -418,7 +472,7 @@ class Repo(context: Context, val deviceId: String, dbName: String = "pantry.db")
         d.delete("ops", null, null)
         d.delete("clocks", null, null)
         d.delete("tombstones", null, null)
-        localSeq = 0
+        keepSeqFloor()
     }
 
     // ---------- Locations ----------
@@ -462,20 +516,27 @@ class Repo(context: Context, val deviceId: String, dbName: String = "pantry.db")
     )
 
     /**
-     * New items write every field. Edits write only the fields that differ from what's stored, so saving the editor
-     * on one phone doesn't overwrite a field the other phone changed in the meantime.
+     * New items write every field. Edits write only the fields that differ from [original], the item as the caller
+     * first read it, so saving doesn't overwrite a field another phone changed in the meantime: a quantity that sync
+     * moved from 4 to 3 while the editor was open isn't written back as 4 by a save that only renamed the item.
+     * Without [original] the comparison is against what is stored now. [quantityDelta] is added to an existing
+     * item's quantity as a delta op, so it combines with changes made on other phones.
      */
-    suspend fun upsertItem(item: Item) = commit {
+    suspend fun upsertItem(item: Item, original: Item? = null, quantityDelta: Double? = null) = commit {
         val now = System.currentTimeMillis()
         val locationUuid = uuidOf(d, "locations", item.locationId)
         if (item.id == 0L) {
             set("items", Hlc.newId(), itemFields(item.copy(addedAt = now, updatedAt = now), locationUuid))
         } else {
             val current = d.rawQuery("SELECT $ITEM_COLS FROM items WHERE id=?", arrayOf("${item.id}")).firstOrNull { it.toItem() } ?: return@commit
-            val before = itemFields(current, uuidOf(d, "locations", current.locationId))
+            val base = original ?: current
+            val baseLocation = d.rawQuery("SELECT uuid FROM locations WHERE rowid=?", arrayOf("${base.locationId}")).firstOrNull { it.getString(0) } ?: ""
+            val before = itemFields(base.copy(addedAt = current.addedAt), baseLocation)
             val after = itemFields(item.copy(addedAt = current.addedAt, updatedAt = now), locationUuid)
             val changed = after.filter { (k, v) -> k != "updated_at" && before[k] != v }
             if (changed.isNotEmpty()) set("items", uuidOf(d, "items", item.id), changed + ("updated_at" to now))
+            // In the same transaction as the edit, so a rejected edit never leaves the quantity half-changed.
+            if (quantityDelta != null && quantityDelta != 0.0) delta("items", uuidOf(d, "items", item.id), "quantity", quantityDelta)
         }
     }
 
@@ -488,23 +549,53 @@ class Repo(context: Context, val deviceId: String, dbName: String = "pantry.db")
      * chosen location tops up that item; anything else becomes a new item.
      */
     suspend fun stockFromCart(lines: List<CartLine>, locationId: Long, autoSort: Boolean = true) {
-        val targets = lines.associateWith { line -> (if (autoSort) suggestLocation(line.name, null, line.barcode) else null) ?: locationId }
-        commit {
-            val now = System.currentTimeMillis()
-            for (line in lines) {
-                val target = targets.getValue(line)
-                // Top up the same product wherever it already lives; otherwise create it in the chosen (or guessed) location.
-                val existing = line.barcode?.let { bc ->
-                    d.rawQuery("SELECT uuid FROM items WHERE barcode=? ORDER BY CASE WHEN location_id=? THEN 0 ELSE 1 END LIMIT 1", arrayOf(bc, "$target")).firstOrNull { it.getString(0) }
-                } ?: d.rawQuery("SELECT uuid FROM items WHERE LOWER(name)=LOWER(?) ORDER BY CASE WHEN location_id=? THEN 0 ELSE 1 END LIMIT 1", arrayOf(line.name, "$target")).firstOrNull { it.getString(0) }
-                if (existing != null) {
-                    delta("items", existing, "quantity", line.qty)
-                } else {
-                    val item = Item(0, line.name, line.barcode, null, line.qty, "", "", target, null, "", null, now, now)
-                    set("items", Hlc.newId(), itemFields(item, uuidOf(d, "locations", target)))
-                }
+        val targets = stockTargets(lines, locationId, autoSort)
+        commit { stock(lines) { targets[it] ?: locationId } }
+    }
+
+    /** Keyed by the line itself, not its id: callers may pass lines that were never stored and all have id 0. */
+    private suspend fun stockTargets(lines: List<CartLine>, locationId: Long, autoSort: Boolean): Map<CartLine, Long> =
+        lines.associateWith { line -> (if (autoSort) suggestLocation(line.name, null, line.barcode) else null) ?: locationId }
+
+    private fun Tx.stock(lines: List<CartLine>, targetOf: (CartLine) -> Long) {
+        val now = System.currentTimeMillis()
+        // Ops are applied after the whole batch is built, so the queries below can't see an item created for an
+        // earlier line. Remember those here, or two lines for one product become two pantry items.
+        val created = HashMap<String, String>()
+        for (line in lines) {
+            val target = targetOf(line)
+            val identity = line.barcode?.let { "barcode:$it" } ?: "name:${line.name.trim().lowercase()}"
+            // Top up the same product wherever it already lives; otherwise create it in the chosen (or guessed) location.
+            val existing = created[identity] ?: line.barcode?.let { bc ->
+                d.rawQuery("SELECT uuid FROM items WHERE barcode=? ORDER BY CASE WHEN location_id=? THEN 0 ELSE 1 END LIMIT 1", arrayOf(bc, "$target")).firstOrNull { it.getString(0) }
+            } ?: d.rawQuery("SELECT uuid FROM items WHERE LOWER(name)=LOWER(?) ORDER BY CASE WHEN location_id=? THEN 0 ELSE 1 END LIMIT 1", arrayOf(line.name, "$target")).firstOrNull { it.getString(0) }
+            if (existing != null) {
+                delta("items", existing, "quantity", line.qty)
+            } else {
+                val item = Item(0, line.name, line.barcode, null, line.qty, "", "", target, null, "", null, now, now)
+                val uuid = Hlc.newId()
+                set("items", uuid, itemFields(item, uuidOf(d, "locations", target)))
+                created[identity] = uuid
             }
         }
+    }
+
+    /**
+     * Finishes a trip in one transaction: stocks the pantry from its lines when [stockInto] is given, then closes
+     * the trip and publishes it. A trip that is already finished is left alone, so a second tap, or a checkout that
+     * was interrupted and tried again, can't add the same quantities twice. Returns whether it finished the trip.
+     */
+    suspend fun checkout(session: CartSession, stockInto: Long?, autoSort: Boolean = true): Boolean {
+        val targets = if (stockInto == null) emptyMap() else stockTargets(tripLines(session.id), stockInto, autoSort)
+        var finished = false
+        commit {
+            val open = d.rawQuery("SELECT 1 FROM cart_sessions WHERE id=? AND finished_at IS NULL", arrayOf("${session.id}")).firstOrNull { true } ?: false
+            if (!open) return@commit
+            if (stockInto != null) stock(d.cartLinesNow(session.id)) { targets[it] ?: stockInto }
+            finish(session)
+            finished = true
+        }
+        return finished
     }
 
     /**
@@ -557,11 +648,24 @@ class Repo(context: Context, val deviceId: String, dbName: String = "pantry.db")
         }
     }
 
-    suspend fun rememberProduct(product: Product) = commit {
-        set(
-            "products", "product:${product.barcode}",
-            mapOf("barcode" to product.barcode, "name" to product.name.trim(), "brand" to product.brand, "quantity_text" to product.quantityText, "source" to product.source, "updated_at" to System.currentTimeMillis(), "category" to product.category),
-        )
+    private fun productFields(product: Product) =
+        mapOf("barcode" to product.barcode, "name" to product.name.trim(), "brand" to product.brand, "quantity_text" to product.quantityText, "source" to product.source, "updated_at" to System.currentTimeMillis(), "category" to product.category)
+
+    suspend fun rememberProduct(product: Product) = commit { set("products", "product:${product.barcode}", productFields(product)) }
+
+    /**
+     * Stores [product] only if its barcode isn't cached yet and returns what the cache holds afterwards. For lookup
+     * results: the user may have named the product by hand while the request was still out, and that name wins.
+     */
+    suspend fun rememberProductIfAbsent(product: Product): Product {
+        var result = product
+        commit {
+            val existing = d.rawQuery("SELECT barcode, name, brand, quantity_text, source, category FROM products WHERE barcode=?", arrayOf(product.barcode)).firstOrNull {
+                Product(it.getString(0), it.getString(1), it.getStringOrNull(2), it.getStringOrNull(3), it.getString(4), it.getStringOrNull(5))
+            }
+            if (existing != null) result = existing else set("products", "product:${product.barcode}", productFields(product))
+        }
+        return result
     }
 
     // ---------- Stores and prices ----------
@@ -606,6 +710,14 @@ class Repo(context: Context, val deviceId: String, dbName: String = "pantry.db")
         d.rawQuery("SELECT price FROM prices WHERE store_id=? AND barcode=?", arrayOf("$storeId", barcode)).firstOrNull { it.getDouble(0) }
     }
 
+    /** Whether this barcode was taxable the last time it was bought at this store; null when it never was bought there. */
+    suspend fun lastTaxable(storeId: Long, barcode: String): Boolean? = read { d ->
+        d.rawQuery(
+            "SELECT l.taxable FROM cart_lines l JOIN cart_sessions s ON s.id = l.session_id WHERE s.store_id=? AND l.barcode=? AND s.finished_at IS NOT NULL ORDER BY s.finished_at DESC LIMIT 1",
+            arrayOf("$storeId", barcode),
+        ).firstOrNull { it.getInt(0) == 1 }
+    }
+
     // ---------- Cart (the live cart is local to the shopping phone; finished trips are synced) ----------
 
     fun openSession(storeId: Long): Flow<CartSession?> = watch(T_CART) { d -> d.openSessionNow(storeId) }
@@ -628,12 +740,12 @@ class Repo(context: Context, val deviceId: String, dbName: String = "pantry.db")
             arrayOf("$sessionId"),
         ).mapAll { CartLine(it.getLong(0), it.getLong(1), it.getStringOrNull(2), it.getString(3), it.getDouble(4), it.getDouble(5), it.getInt(6) == 1) }
 
-    /** Adds a line, or bumps the quantity when the same barcode is already in the cart at the same price. */
+    /** Adds a line, or bumps the quantity when the same barcode is already in the cart at the same price and tax treatment. */
     suspend fun addCartLine(line: CartLine): Long = write(T_CART) { d ->
         val same = line.barcode?.let { bc ->
             d.rawQuery(
-                "SELECT id FROM cart_lines WHERE session_id=? AND barcode=? AND unit_price=? LIMIT 1",
-                arrayOf("${line.sessionId}", bc, "${line.unitPrice}"),
+                "SELECT id FROM cart_lines WHERE session_id=? AND barcode=? AND unit_price=? AND taxable=? LIMIT 1",
+                arrayOf("${line.sessionId}", bc, "${line.unitPrice}", if (line.taxable) "1" else "0"),
             ).firstOrNull { it.getLong(0) }
         }
         if (same != null) {
@@ -658,16 +770,26 @@ class Repo(context: Context, val deviceId: String, dbName: String = "pantry.db")
         )
     }
 
+    /** Adds [delta] to the stored quantity (not to a copy a screen is holding) and removes the line when nothing is left. */
+    suspend fun changeCartLineQty(id: Long, delta: Double) = write(T_CART) { d ->
+        d.execSQL("UPDATE cart_lines SET qty = qty + ? WHERE id = ?", arrayOf<Any>(delta, id))
+        d.delete("cart_lines", "id=? AND qty <= 0", arrayOf("$id"))
+    }
+
     suspend fun deleteCartLine(id: Long) = write(T_CART) { d -> d.delete("cart_lines", "id=?", arrayOf("$id")) }
 
     suspend fun clearCart(sessionId: Long) = write(T_CART) { d -> d.delete("cart_lines", "session_id=?", arrayOf("$sessionId")) }
 
     /** Closes the trip, remembers each barcode's price at this store, and publishes the trip to the household. */
-    suspend fun finishSession(session: CartSession) = commit {
+    suspend fun finishSession(session: CartSession) = commit { finish(session) }
+
+    private fun Tx.finish(session: CartSession) {
         val now = System.currentTimeMillis()
         val storeUuid = uuidOf(d, "stores", session.storeId)
         val sessionUuid = uuidOf(d, "cart_sessions", session.id)
-        set("cart_sessions", sessionUuid, mapOf("store" to storeUuid, "started_at" to session.startedAt, "finished_at" to now))
+        // The rate is recorded with the trip, so changing the store's rate later doesn't rewrite old totals.
+        val taxRate = d.rawQuery("SELECT tax_rate FROM stores WHERE id=?", arrayOf("${session.storeId}")).firstOrNull { it.getDouble(0) } ?: 0.0
+        set("cart_sessions", sessionUuid, mapOf("store" to storeUuid, "started_at" to session.startedAt, "finished_at" to now, "tax_rate" to taxRate))
         for (line in d.cartLinesNow(session.id)) {
             set(
                 "cart_lines", uuidOf(d, "cart_lines", line.id),
@@ -686,7 +808,8 @@ class Repo(context: Context, val deviceId: String, dbName: String = "pantry.db")
 
     fun pastTrips(): Flow<List<TripSummary>> = watch(T_CART, T_STORES) { d ->
         d.rawQuery(
-            """SELECT s.id, s.store_id, s.started_at, s.finished_at, st.name, st.tax_rate
+            // Trips finished before the rate was recorded fall back to the store's current rate.
+            """SELECT s.id, s.store_id, s.started_at, s.finished_at, st.name, COALESCE(s.tax_rate, st.tax_rate)
                FROM cart_sessions s JOIN stores st ON st.id = s.store_id
                WHERE s.finished_at IS NOT NULL ORDER BY s.finished_at DESC LIMIT 50""",
             null,
@@ -719,8 +842,14 @@ class Repo(context: Context, val deviceId: String, dbName: String = "pantry.db")
         }
     }
 
-    suspend fun updateShoppingItem(item: ShoppingItem) = commit {
-        set("shopping_list", uuidOf(d, "shopping_list", item.id), mapOf("name" to item.name.trim(), "quantity_text" to item.quantityText.trim(), "checked" to if (item.checked) 1 else 0))
+    /** Writes only the fields that are passed, so renaming an entry can't undo a tick another phone just made. */
+    suspend fun patchShoppingItem(id: Long, name: String? = null, quantityText: String? = null, checked: Boolean? = null) = commit {
+        val fields = buildMap<String, Any?> {
+            if (name != null) put("name", name.trim())
+            if (quantityText != null) put("quantity_text", quantityText.trim())
+            if (checked != null) put("checked", if (checked) 1 else 0)
+        }
+        if (fields.isNotEmpty()) set("shopping_list", uuidOf(d, "shopping_list", id), fields)
     }
 
     suspend fun setChecked(id: Long, checked: Boolean) = commit { set("shopping_list", uuidOf(d, "shopping_list", id), mapOf("checked" to if (checked) 1 else 0)) }
@@ -794,16 +923,22 @@ class Repo(context: Context, val deviceId: String, dbName: String = "pantry.db")
 
     suspend fun clearChat() = write(T_CHAT) { d -> d.delete("chat_messages", null, null) }
 
-    /** Everything, including the replication log. Used by the settings "delete all data" action. */
-    suspend fun wipe() = write(*ALL_TABLES) { d ->
-        listOf("chat_messages", "recipes", "shopping_list", "cart_lines", "cart_sessions", "prices", "stores", "products", "items", "locations", "ops", "clocks", "tombstones", "peers").forEach {
-            d.delete(it, null, null)
+    /**
+     * Everything, including the replication log and the recipe photo files. Used by the settings "delete all data"
+     * action. Returns false when a photo file could not be removed.
+     */
+    suspend fun wipe(): Boolean {
+        write(*ALL_TABLES) { d ->
+            listOf("chat_messages", "recipes", "shopping_list", "cart_lines", "cart_sessions", "prices", "stores", "products", "items", "locations", "ops", "clocks", "tombstones", "peers").forEach {
+                d.delete(it, null, null)
+            }
+            keepSeqFloor()
+            PantryDb.DEFAULT_LOCATIONS.forEachIndexed { index, name ->
+                d.insertOrThrow("locations", null, cv("uuid" to Hlc.newId(), "name" to name, "sort_order" to index))
+            }
+            d.insertOrThrow("stores", null, cv("uuid" to Hlc.newId(), "name" to PantryDb.DEFAULT_STORE, "tax_rate" to 0.0))
         }
-        localSeq = 0
-        PantryDb.DEFAULT_LOCATIONS.forEachIndexed { index, name ->
-            d.insertOrThrow("locations", null, cv("uuid" to Hlc.newId(), "name" to name, "sort_order" to index))
-        }
-        d.insertOrThrow("stores", null, cv("uuid" to Hlc.newId(), "name" to PantryDb.DEFAULT_STORE, "tax_rate" to 0.0))
+        return withContext(Dispatchers.IO) { photosDir.listFiles().orEmpty().map { it.delete() }.all { it } }
     }
 
     // ---------- Helpers ----------
@@ -847,6 +982,9 @@ class Repo(context: Context, val deviceId: String, dbName: String = "pantry.db")
         const val ITEM_COL_COUNT = 13
         /** Op field carrying a recipe photo as base64 JPEG; applied to a file, not a column. */
         const val PHOTO_FIELD = "photo_b64"
+        /** Row ids allowed to become part of a file name: uuid-shaped, no separators or dots. */
+        val SAFE_FILE_ROW = Regex("[A-Za-z0-9-]{1,64}")
+        const val K_SEQ_FLOOR = "seq_floor"
         /** Columns that must stay integers even though JSON hands numbers back as doubles. */
         val INTEGER_COLUMNS = setOf("sort_order", "expires_on", "added_at", "updated_at", "seen_at", "started_at", "finished_at", "created_at", "checked", "taxable")
     }

@@ -96,6 +96,7 @@ fun HouseholdScreen(app: PantryApp, onBack: () -> Unit) {
     var joining by remember { mutableStateOf(false) }
     var addPeer by remember { mutableStateOf(false) }
     var confirmLeave by remember { mutableStateOf(false) }
+    var linkToConfirm by remember { mutableStateOf<String?>(null) }
     var name by rememberSaveable(household.deviceName) { mutableStateOf(household.deviceName) }
     val addrs = remember(household.joined, status.listening) { Addresses.local() }
 
@@ -108,7 +109,7 @@ fun HouseholdScreen(app: PantryApp, onBack: () -> Unit) {
         scope.launch {
             try {
                 val info = app.household.join(input)
-                if (app.repo.isPristine()) app.repo.dropDefaultsForJoin()
+                app.repo.dropDefaultsForJoin() // only does anything on a phone with nothing but the defaults
                 app.repo.seedOpsForExistingState()
                 info.peerAddrs.forEach { app.repo.addManualPeer(it) }
                 app.sync.restart()
@@ -136,7 +137,9 @@ fun HouseholdScreen(app: PantryApp, onBack: () -> Unit) {
     LaunchedEffect(pendingJoin) {
         val link = pendingJoin ?: return@LaunchedEffect
         app.pendingJoin.value = null
-        if (!household.joined) join(link) else snackbar.showSnackbar("Already in a household. Leave it first to join another.")
+        // Any app or web page can open a pocketpantry://join link. Joining shares this phone's pantry with whoever
+        // made the link, so it is never done without asking.
+        if (!household.joined) linkToConfirm = link else snackbar.showSnackbar("Already in a household. Leave it first to join another.")
     }
 
     val notificationPermission = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
@@ -254,7 +257,8 @@ fun HouseholdScreen(app: PantryApp, onBack: () -> Unit) {
                             checked = household.backgroundSync,
                             onCheckedChange = { on ->
                                 if (on) {
-                                    if (ContextCompat.checkSelfPermission(context, Manifest.permission.POST_NOTIFICATIONS) == PackageManager.PERMISSION_GRANTED) {
+                                    // POST_NOTIFICATIONS only exists from Android 13; before that there is nothing to ask.
+                                    if (android.os.Build.VERSION.SDK_INT < 33 || ContextCompat.checkSelfPermission(context, Manifest.permission.POST_NOTIFICATIONS) == PackageManager.PERMISSION_GRANTED) {
                                         app.household.setBackgroundSync(true)
                                         SyncService.start(context)
                                     } else notificationPermission.launch(Manifest.permission.POST_NOTIFICATIONS)
@@ -289,7 +293,9 @@ fun HouseholdScreen(app: PantryApp, onBack: () -> Unit) {
                             Text(
                                 buildString {
                                     append(peer.lastSync?.let { "Synced ${fmtDateTime(it)}" } ?: "Never synced")
-                                    val ts = peer.addrs.filter { Addresses.isTailscale(Addresses.parse(it).let { s -> java.net.InetAddress.getByName(s.hostString) }) }
+                                    // From the text alone: parsing or resolving here would crash on a bad saved address,
+                                    // before the Forget button that removes it could be drawn.
+                                    val ts = peer.addrs.filter { Addresses.isTailscaleAddr(it) }
                                     if (ts.isNotEmpty()) append(" · Tailscale ${ts.first()}")
                                     else if (peer.addrs.isNotEmpty()) append(" · ${peer.addrs.first()}")
                                 },
@@ -315,6 +321,10 @@ fun HouseholdScreen(app: PantryApp, onBack: () -> Unit) {
     if (addPeer) {
         TextPromptDialog("Add a phone by address", "Address", confirmLabel = "Add", onDismiss = { addPeer = false }) { addr ->
             scope.launch {
+                if (!Addresses.isValid(addr)) {
+                    snackbar.showSnackbar("That isn't an address this phone can dial. Use something like 100.64.0.5 or 100.64.0.5:${com.sovereignedge.pocketpantry.sync.SYNC_PORT}.")
+                    return@launch
+                }
                 app.repo.addManualPeer(addr.trim())
                 snackbar.showSnackbar(app.sync.syncNow("manual address"))
             }
@@ -323,14 +333,17 @@ fun HouseholdScreen(app: PantryApp, onBack: () -> Unit) {
     if (confirmLeave) {
         ConfirmDialog("Leave the household?", "This phone keeps its data and stops syncing. The others are unaffected.", confirmLabel = "Leave",
             onConfirm = {
-                scope.launch {
-                    app.sync.stop()
-                    SyncService.stop(context)
-                    app.household.setBackgroundSync(false)
-                    app.household.leave()
-                    app.repo.clearSyncState()
-                }
+                scope.launch { app.leaveHousehold() }
             }, onDismiss = { confirmLeave = false })
+    }
+    linkToConfirm?.let { link ->
+        val from = runCatching { com.sovereignedge.pocketpantry.sync.Household.parse(link).peerName }.getOrNull()?.takeIf { it.isNotBlank() }
+        ConfirmDialog(
+            "Join this household?",
+            "A link asked this phone to join ${if (from != null) "the household of \"$from\"" else "a household"}. Everything in this pantry will be shared with the phones in it. Only continue if the link came from a phone you trust.",
+            confirmLabel = "Join",
+            onConfirm = { join(link) }, onDismiss = { linkToConfirm = null },
+        )
     }
 }
 

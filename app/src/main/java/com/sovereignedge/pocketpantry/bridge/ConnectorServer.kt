@@ -179,19 +179,22 @@ class ConnectorServer(
         ) { args ->
             val id = args.number("id")?.toLong() ?: error("id is required")
             val item = repo.item(id) ?: error("No item with id $id")
-            args.number("quantity_delta")?.let { repo.adjustQuantity(id, it) }
             val locations = repo.locations().first()
+            // Everything is parsed and checked before anything is written, and the write is one transaction: a bad
+            // date must not leave the quantity already changed, or a corrected retry would apply the delta twice.
+            // Fields the request didn't give keep the value read above, and upsertItem writes only what differs
+            // from that, so an edit made on another phone in the meantime isn't written back over.
             val updated = item.copy(
                 name = args.optional("name") ?: item.name,
-                quantity = args.number("quantity") ?: (repo.item(id)?.quantity ?: item.quantity),
-                unit = args.optional("unit") ?: item.unit,
-                size = args.optional("size") ?: item.size,
+                quantity = args.number("quantity") ?: item.quantity,
+                unit = args.text("unit") ?: item.unit,
+                size = args.text("size") ?: item.size,
                 locationId = args.optional("location")?.let { wanted -> locations.firstOrNull { it.name.equals(wanted, true) }?.id ?: error("No location named '$wanted'") } ?: item.locationId,
                 expiresOn = when (val e = args.optional("expires_on")) { null -> item.expiresOn; "none" -> null; else -> LocalDate.parse(e).toEpochDay() },
-                notes = args.optional("notes") ?: item.notes,
+                notes = args.text("notes") ?: item.notes,
                 lowThreshold = args.number("low_threshold") ?: item.lowThreshold,
             )
-            repo.upsertItem(updated)
+            repo.upsertItem(updated, original = item, quantityDelta = args.number("quantity_delta"))
             val after = repo.item(id)!!
             "Updated ${after.name}: quantity ${fmt(after.quantity)} ${after.unit}".trim() + "."
         }
@@ -264,9 +267,10 @@ class ConnectorServer(
         ) { args ->
             val id = args.number("id")?.toLong() ?: error("id is required")
             val entry = repo.shoppingListNow().firstOrNull { it.id == id } ?: error("No shopping list entry with id $id")
-            val checked = args["checked"]?.jsonPrimitive?.contentOrNull?.toBooleanStrictOrNull() ?: entry.checked
-            repo.updateShoppingItem(entry.copy(name = args.optional("name") ?: entry.name, quantityText = args.optional("quantity") ?: entry.quantityText, checked = checked))
-            "Updated ${entry.name}${if (checked != entry.checked) if (checked) " (ticked)" else " (unticked)" else ""}."
+            val checked = args["checked"]?.jsonPrimitive?.contentOrNull?.toBooleanStrictOrNull()
+            // Only the fields that were given: a rename must not write back a tick state read a moment ago.
+            repo.patchShoppingItem(id, name = args.optional("name"), quantityText = args.text("quantity"), checked = checked)
+            "Updated ${args.optional("name") ?: entry.name}${if (checked != null && checked != entry.checked) if (checked) " (ticked)" else " (unticked)" else ""}."
         }
 
         server.tool(
@@ -442,6 +446,8 @@ class ConnectorServer(
 
     private fun JsonObject.string(key: String): String = optional(key) ?: throw IllegalArgumentException("Missing argument: $key")
     private fun JsonObject.optional(key: String): String? = this[key]?.jsonPrimitive?.contentOrNull?.takeIf { it.isNotBlank() }
+    /** Like [optional], but an explicit empty string is kept: that is how a note, unit or size is cleared. */
+    private fun JsonObject.text(key: String): String? = this[key]?.jsonPrimitive?.contentOrNull
     private fun JsonObject.number(key: String): Double? = this[key]?.jsonPrimitive?.doubleOrNull
 
     private fun fmt(value: Double) = if (value % 1.0 == 0.0) value.toLong().toString() else "%.2f".format(value).trimEnd('0').trimEnd('.')

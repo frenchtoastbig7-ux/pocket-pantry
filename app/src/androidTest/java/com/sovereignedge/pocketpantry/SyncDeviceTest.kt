@@ -32,8 +32,10 @@ class SyncDeviceTest {
     fun fresh() {
         context.deleteDatabase("sync-a.db")
         context.deleteDatabase("sync-b.db")
-        a = Repo(context, "device-a", "sync-a.db")
-        b = Repo(context, "device-b", "sync-b.db")
+        // Each "phone" gets its own photo directory, or a photo written by one would already be there for the other.
+        for (dir in listOf("test-photos-a", "test-photos-b")) java.io.File(context.filesDir, dir).deleteRecursively()
+        a = Repo(context, "device-a", "sync-a.db", "test-photos-a")
+        b = Repo(context, "device-b", "sync-b.db", "test-photos-b")
     }
 
     private suspend fun exchange(from: Repo, to: Repo) {
@@ -84,12 +86,14 @@ class SyncDeviceTest {
         assertEquals("Dairyco", finalB.brand)
         assertEquals("Whole milk", finalA.name)
 
-        // Delete on A while B is offline and keeps editing: the newer edit wins consistently on both.
+        // Delete on A while B is offline and adjusts the quantity. A delta cannot bring a deleted row back, so the
+        // item is gone on both phones.
         a.deleteItem(finalA.id)
         Thread.sleep(5)
         b.adjustQuantity(finalB.id, 1.0)
         both()
-        assertEquals(a.itemsNow().map { it.name }, b.itemsNow().map { it.name })
+        assertTrue(a.itemsNow().isEmpty())
+        assertTrue(b.itemsNow().isEmpty())
 
         // Shopping list and list ticks replicate; re-applying the same ops is a no-op.
         b.addToShoppingList("Eggs", "12")
@@ -143,13 +147,15 @@ class SyncDeviceTest {
         val onB = b.recipesNow().single()
         assertEquals(4, onB.rating)
         val file = b.photoFile(onB)
-        assertTrue("photo file must exist on B", file != null && file.length() == jpeg.size.toLong())
+        assertTrue("photo file must exist on B", file != null && file.parentFile == b.photosDir)
+        org.junit.Assert.assertArrayEquals("B must hold the bytes A stored", jpeg, file!!.readBytes())
         b.setRecipeRating(onB.id, 5)
         b.setRecipePhoto(onB.id, null)
         both()
         val onA = a.recipesNow().single()
         assertEquals(5, onA.rating)
         assertNull(a.photoFile(onA))
+        assertTrue("the file is removed on both phones", a.photosDir.listFiles().orEmpty().isEmpty() && b.photosDir.listFiles().orEmpty().isEmpty())
     }
 
     @Test
@@ -194,16 +200,21 @@ class SyncDeviceTest {
         val discovery = com.sovereignedge.pocketpantry.sync.LanDiscovery(context, householdId, "device-a", scope) { host, port, dev -> found.complete(Triple(host, port, dev)) }
         discovery.start()
         try {
-            Thread.sleep(500)
+            // start() returns before the beacon socket is bound, and a datagram sent before that is simply lost.
+            // Keep sending until one is heard instead of guessing how long the bind takes.
             java.net.DatagramSocket().use { socket ->
-                val wrong = "pp1 ffffffffffffffff device-x 47632".toByteArray()
-                socket.send(java.net.DatagramPacket(wrong, wrong.size, java.net.InetAddress.getByName("127.0.0.1"), 47633))
-                val self = "pp1 ${householdId.take(16)} device-a 47632".toByteArray()
-                socket.send(java.net.DatagramPacket(self, self.size, java.net.InetAddress.getByName("127.0.0.1"), 47633))
-                val right = "pp1 ${householdId.take(16)} device-b 47632".toByteArray()
-                socket.send(java.net.DatagramPacket(right, right.size, java.net.InetAddress.getByName("127.0.0.1"), 47633))
+                val deadline = System.currentTimeMillis() + 10_000
+                while (!found.isDone && System.currentTimeMillis() < deadline) {
+                    val wrong = "pp1 ffffffffffffffff device-x 47632".toByteArray()
+                    socket.send(java.net.DatagramPacket(wrong, wrong.size, java.net.InetAddress.getByName("127.0.0.1"), 47633))
+                    val self = "pp1 ${householdId.take(16)} device-a 47632".toByteArray()
+                    socket.send(java.net.DatagramPacket(self, self.size, java.net.InetAddress.getByName("127.0.0.1"), 47633))
+                    val right = "pp1 ${householdId.take(16)} device-b 47632".toByteArray()
+                    socket.send(java.net.DatagramPacket(right, right.size, java.net.InetAddress.getByName("127.0.0.1"), 47633))
+                    Thread.sleep(200)
+                }
             }
-            val hit = found.get(10, java.util.concurrent.TimeUnit.SECONDS)
+            val hit = found.get(1, java.util.concurrent.TimeUnit.SECONDS)
             assertEquals("device-b", hit.third)
             assertEquals(47632, hit.second)
             assertEquals("127.0.0.1", hit.first)
@@ -250,8 +261,10 @@ class SyncDeviceTest {
         ServerSocket(0).use { server ->
             val serverSide = async(Dispatchers.IO) { runCatching { server.accept().use { protoA.exchange(it) } } }
             val clientSide = async(Dispatchers.IO) { runCatching { Socket("127.0.0.1", server.localPort).use { protoC.exchange(it) } } }
-            assertTrue(serverSide.await().isFailure)
-            assertTrue(clientSide.await().isFailure)
+            val results = listOf(serverSide.await(), clientSide.await())
+            assertTrue(results.all { it.isFailure })
+            // Refused by the protocol at hello, not merely a socket that happened to fail.
+            assertTrue(results.any { it.exceptionOrNull() is Protocol.HouseholdMismatch })
         }
         hhA.leave(); hhB.leave(); hhC.leave()
     }

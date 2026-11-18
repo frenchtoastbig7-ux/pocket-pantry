@@ -75,7 +75,8 @@ class PantryDb(context: Context, name: String = "pantry.db") : SQLiteOpenHelper(
                 uuid TEXT NOT NULL UNIQUE,
                 store_id INTEGER NOT NULL REFERENCES stores(id) ON DELETE CASCADE,
                 started_at INTEGER NOT NULL,
-                finished_at INTEGER)"""
+                finished_at INTEGER,
+                tax_rate REAL)"""
         )
         db.execSQL(
             """CREATE TABLE cart_lines(
@@ -149,6 +150,10 @@ class PantryDb(context: Context, name: String = "pantry.db") : SQLiteOpenHelper(
         if (oldVersion < 5) {
             db.execSQL("ALTER TABLE products ADD COLUMN category TEXT")
         }
+        if (oldVersion < 6) {
+            // The store's tax rate when the trip was finished; null for trips finished before this existed.
+            db.execSQL("ALTER TABLE cart_sessions ADD COLUMN tax_rate REAL")
+        }
     }
 
     private fun createSyncTables(db: SQLiteDatabase) {
@@ -182,7 +187,7 @@ class PantryDb(context: Context, name: String = "pantry.db") : SQLiteOpenHelper(
     }
 
     companion object {
-        const val VERSION = 5
+        const val VERSION = 6
         val DEFAULT_LOCATIONS = listOf("Pantry", "Counter", "Fridge", "Freezer")
         const val DEFAULT_STORE = "My grocery store"
     }

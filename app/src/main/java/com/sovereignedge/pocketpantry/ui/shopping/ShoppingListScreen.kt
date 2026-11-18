@@ -166,7 +166,8 @@ fun ShoppingListScreen(app: PantryApp, modifier: Modifier = Modifier, onOpenSett
             },
             confirmButton = {
                 TextButton(enabled = name.isNotBlank(), onClick = {
-                    scope.launch { app.repo.updateShoppingItem(entry.copy(name = name, quantityText = qty)) }
+                    // Name and amount only: the tick may have changed on another phone while this dialog was open.
+                    scope.launch { app.repo.patchShoppingItem(entry.id, name = name, quantityText = qty) }
                     editing = null
                 }) { Text("Save") }
             },

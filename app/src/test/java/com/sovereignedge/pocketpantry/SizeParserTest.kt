@@ -35,6 +35,23 @@ class SizeParserTest {
     }
 
     @Test
+    fun prefersAPhysicalSizeOverACount() {
+        assertEquals("16 oz", SizeParser.parse("Rice 2 bags, 16 oz"))
+        assertEquals("2 bag", SizeParser.parse("Rice 2 bags"))
+        assertEquals("12 ct", SizeParser.parse("Large Eggs, 12 ct"))
+        assertFalse(SizeParser.looksLikeSize("2 bags, 16 oz"))
+    }
+
+    @Test
+    fun readsFractionsWhole() {
+        assertEquals("1/2 gal", SizeParser.parse("Milk 1/2 gallon"))
+        assertEquals("1 1/2 qt", SizeParser.parse("Broth 1 1/2 qt"))
+        assertEquals("3/4 lb", SizeParser.parse("Deli Ham 3/4 lb"))
+        assertTrue(SizeParser.looksLikeSize("1/2 gal"))
+        assertNull(SizeParser.parse("Scale 1/24 model"))
+    }
+
+    @Test
     fun ignoresTextWithoutASize() {
         assertNull(SizeParser.parse("Bay Leaf"))
         assertNull(SizeParser.parse("30% Less Sodium"))

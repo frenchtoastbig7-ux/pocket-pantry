@@ -66,6 +66,16 @@ fun BarcodeCamera(
         asked = true
     }
     LaunchedEffect(Unit) { if (!granted) launcher.launch(Manifest.permission.CAMERA) }
+    // Coming back from the system settings page doesn't recreate the Activity, so look again on every resume.
+    DisposableEffect(lifecycleOwner) {
+        val observer = androidx.lifecycle.LifecycleEventObserver { _, event ->
+            if (event == androidx.lifecycle.Lifecycle.Event.ON_RESUME) {
+                granted = ContextCompat.checkSelfPermission(context, Manifest.permission.CAMERA) == PackageManager.PERMISSION_GRANTED
+            }
+        }
+        lifecycleOwner.lifecycle.addObserver(observer)
+        onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
+    }
 
     if (!granted) {
         Box(modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
@@ -107,8 +117,10 @@ fun BarcodeCamera(
     // Held so the camera can be released when the scanner leaves the screen; binding to the Activity lifecycle alone
     // would keep it (and the privacy indicator) running until the Activity stops.
     val boundProvider = remember { arrayOfNulls<ProcessCameraProvider>(1) }
+    val active = remember { java.util.concurrent.atomic.AtomicBoolean(true) }
     DisposableEffect(Unit) {
         onDispose {
+            active.set(false)
             boundProvider[0]?.unbindAll()
             executor.shutdown()
             scanner.close()
@@ -128,7 +140,8 @@ fun BarcodeCamera(
                     .build()
                 analysis.setAnalyzer(executor) { proxy ->
                     analyze(proxy, scanner, lastSeen, cooldownMillis, currentPaused) { code ->
-                        previewView.post { currentOnBarcode(code) }
+                        // The result is delivered on the main thread a moment later; by then the scanner may be closed or paused.
+                        previewView.post { if (active.get() && !currentPaused) currentOnBarcode(code) }
                     }
                 }
                 provider.unbindAll()

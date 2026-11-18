@@ -157,14 +157,16 @@ fun RecipesScreen(app: PantryApp, modifier: Modifier = Modifier, onOpenSettings:
         if (extracting) return
         extracting = true
         scope.launch {
-            try {
+            // showSnackbar suspends until the message is gone, so the spinner is cleared first, not in a finally around it.
+            val message = try {
                 val found = app.chat.missingIngredients(markdown)
-                if (found.isEmpty()) snackbar.showSnackbar("Claude found nothing missing from your pantry") else suggestions = found
+                if (found.isEmpty()) "Claude found nothing missing from your pantry" else null.also { suggestions = found }
             } catch (e: Exception) {
-                snackbar.showSnackbar(ClaudeService.describe(e))
+                ClaudeService.describe(e)
             } finally {
                 extracting = false
             }
+            if (message != null) snackbar.showSnackbar(message)
         }
     }
 
@@ -172,7 +174,7 @@ fun RecipesScreen(app: PantryApp, modifier: Modifier = Modifier, onOpenSettings:
         val recipe = recipes.firstOrNull { it.id == opened.id } ?: opened
         BackHandler { openRecipe = null }
         RecipeDetail(
-            app = app, recipe = recipe, modifier = modifier, extracting = extracting, onBack = { openRecipe = null },
+            app = app, recipe = recipe, modifier = modifier, extracting = extracting, snackbar = snackbar, onBack = { openRecipe = null },
             onAddToList = { addToList(recipe.body) },
             onDelete = { scope.launch { app.repo.deleteRecipe(recipe.id) }; openRecipe = null },
         )
@@ -375,22 +377,25 @@ private fun StarRow(rating: Int, onRate: (Int) -> Unit) {
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-private fun RecipeDetail(app: PantryApp, recipe: Recipe, modifier: Modifier, extracting: Boolean, onBack: () -> Unit, onAddToList: () -> Unit, onDelete: () -> Unit) {
+private fun RecipeDetail(app: PantryApp, recipe: Recipe, modifier: Modifier, extracting: Boolean, snackbar: SnackbarHostState, onBack: () -> Unit, onAddToList: () -> Unit, onDelete: () -> Unit) {
     var confirmDelete by remember { mutableStateOf(false) }
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
-    val photoFile = remember(recipe.photo) { app.repo.photoFile(recipe) }
+    // A replaced photo keeps its file name, so nothing in `recipe` changes; this counter is what makes it load again.
+    var photoVersion by remember { mutableIntStateOf(0) }
+    val photoFile = remember(recipe.photo, photoVersion) { app.repo.photoFile(recipe) }
     var photo by remember(photoFile) { mutableStateOf<android.graphics.Bitmap?>(null) }
-    LaunchedEffect(photoFile) { photo = photoFile?.let { f -> withContext(Dispatchers.IO) { android.graphics.BitmapFactory.decodeFile(f.path, android.graphics.BitmapFactory.Options().apply { inSampleSize = 2 }) } } }
+    LaunchedEffect(photoFile, photoVersion) { photo = photoFile?.let { f -> withContext(Dispatchers.IO) { android.graphics.BitmapFactory.decodeFile(f.path, android.graphics.BitmapFactory.Options().apply { inSampleSize = 2 }) } } }
     val pickPhoto = rememberLauncherForActivityResult(ActivityResultContracts.PickVisualMedia()) { uri ->
-        if (uri != null) scope.launch { withContext(Dispatchers.IO) { Photos.fromUri(context, uri) }?.let { app.repo.setRecipePhoto(recipe.id, it) } }
+        if (uri != null) scope.launch { withContext(Dispatchers.IO) { Photos.fromUri(context, uri) }?.let { app.repo.setRecipePhoto(recipe.id, it); photoVersion++ } }
     }
     val takePhoto = rememberLauncherForActivityResult(ActivityResultContracts.TakePicturePreview()) { bitmap ->
-        if (bitmap != null) scope.launch { app.repo.setRecipePhoto(recipe.id, withContext(Dispatchers.IO) { Photos.fromBitmap(bitmap) }) }
+        if (bitmap != null) scope.launch { app.repo.setRecipePhoto(recipe.id, withContext(Dispatchers.IO) { Photos.fromBitmap(bitmap) }); photoVersion++ }
     }
     Scaffold(
         modifier = modifier,
         contentWindowInsets = WindowInsets(0, 0, 0, 0),
+        snackbarHost = { SnackbarHost(snackbar) },
         topBar = {
             TopAppBar(
                 title = { Text(recipe.title, maxLines = 1) },

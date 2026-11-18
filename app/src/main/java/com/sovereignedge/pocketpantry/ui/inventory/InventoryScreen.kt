@@ -88,6 +88,7 @@ fun InventoryScreen(app: PantryApp, modifier: Modifier = Modifier, onOpenSetting
     var editing by remember { mutableStateOf<Item?>(null) }
     var scanning by rememberSaveable { mutableStateOf(false) }
     var lookingUp by remember { mutableStateOf(false) }
+    var saving by remember { mutableStateOf(false) }
 
     val today = LocalDate.now()
     val visible = items.filter { item ->
@@ -128,6 +129,8 @@ fun InventoryScreen(app: PantryApp, modifier: Modifier = Modifier, onOpenSetting
                     if (current != null && current.id == 0L && current.barcode == code) {
                         // Suggest where it goes: the same barcode's usual place, or the guesser's verdict on name and category.
                         val suggested = app.repo.suggestLocation(product?.name ?: current.name, product?.brand, code, product?.category)
+                        // The editor may have been closed, or another opened, while that was being read.
+                        if (editing !== current) return@launch
                         if (product != null) editing = current.copy(name = current.name.ifBlank { product.name }, brand = current.brand ?: product.brand, size = current.size.ifBlank { product.quantityText ?: "" }, locationId = suggested ?: current.locationId)
                         else {
                             if (suggested != null) editing = current.copy(locationId = suggested)
@@ -243,13 +246,21 @@ fun InventoryScreen(app: PantryApp, modifier: Modifier = Modifier, onOpenSetting
             locations = locations,
             onDismiss = { editing = null },
             onSave = { saved ->
-                scope.launch {
-                    app.repo.upsertItem(saved)
-                    if (saved.barcode != null && saved.name.isNotBlank() && app.repo.product(saved.barcode) == null) {
-                        app.repo.rememberProduct(Product(saved.barcode, saved.name, saved.brand, null, "user"))
+                // The sheet stays up until the write returns; a second tap on Save would add a new item twice.
+                if (!saving) {
+                    saving = true
+                    scope.launch {
+                        try {
+                            app.repo.upsertItem(saved, original = item.takeIf { it.id != 0L })
+                            if (saved.barcode != null && saved.name.isNotBlank() && app.repo.product(saved.barcode) == null) {
+                                app.repo.rememberProduct(Product(saved.barcode, saved.name, saved.brand, saved.size.trim().ifBlank { null }, "user"))
+                            }
+                        } finally {
+                            saving = false
+                        }
+                        editing = null
+                        snackbar.showSnackbar(if (item.id == 0L) "Added ${saved.name}" else "Saved")
                     }
-                    editing = null
-                    snackbar.showSnackbar(if (item.id == 0L) "Added ${saved.name}" else "Saved")
                 }
             },
             onDelete = if (item.id == 0L) null else {

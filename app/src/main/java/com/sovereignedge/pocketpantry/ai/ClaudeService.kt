@@ -54,7 +54,8 @@ class ClaudeService(private val settings: Settings) {
      * the HTTP response, which is the only way to interrupt the blocking read.
      */
     suspend fun stream(system: String, history: List<ChatMessage>, onEvent: suspend (Event) -> Unit): String {
-        val client = client()
+        // Off the caller's thread: reading the API key decrypts through the Keystore, which can take a while.
+        val client = withContext(Dispatchers.IO) { client() }
         val snapshot = settings.current
         val params = MessageCreateParams.builder()
             .model(snapshot.model)
