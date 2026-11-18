@@ -6,7 +6,7 @@ package com.sovereignedge.pocketpantry.barcode
  */
 object SizeParser {
     private const val NUMBER = """(\d+(?:[.,]\d+)?)"""
-    private const val UNIT = """(fl\.?\s*oz\.?|fluid\s+ounces?|oz\.?|ounces?|lbs?\.?|pounds?|kgs?|kilograms?|g|grams?|mg|ml|milliliters?|millilitres?|l|liters?|litres?|ct\.?|count|pk|pack|pcs?|pieces?|sheets?|bags?|cans?|bottles?|rolls?)"""
+    private const val UNIT = """(fl\.?\s*oz\.?|fluid\s+ounces?|oz\.?|ounces?|lbs?\.?|pounds?|kgs?|kilograms?|g|grams?|mg|ml|milliliters?|millilitres?|l|liters?|litres?|gal\.?|gallons?|qts?\.?|quarts?|pts?\.?|pints?|ct\.?|count|pk|pack|pcs?|pieces?|sheets?|bags?|cans?|bottles?|rolls?)"""
     private val single = Regex("""(?<![\w.])$NUMBER\s*-?\s*$UNIT(?![a-z])""", RegexOption.IGNORE_CASE)
     private val multi = Regex("""(?<![\w.])$NUMBER\s*(?:x|×|pack of|pk of|ct of)\s*$NUMBER\s*-?\s*$UNIT(?![a-z])""", RegexOption.IGNORE_CASE)
     private val packOf = Regex("""(?<![\w.])(?:pack of|case of)\s*(\d+)""", RegexOption.IGNORE_CASE)
@@ -43,6 +43,9 @@ object SizeParser {
             u == "mg" -> "mg"
             u == "ml" || u.startsWith("milli") -> "ml"
             u == "l" || u.startsWith("lit") -> "L"
+            u.startsWith("gal") -> "gal"
+            u.startsWith("qt") || u.startsWith("quart") -> "qt"
+            u.startsWith("pt") || u.startsWith("pint") -> "pt"
             u.startsWith("ct") || u == "count" -> "ct"
             u == "pk" || u == "pack" -> "pack"
             u.startsWith("pc") || u.startsWith("piece") -> "pcs"
